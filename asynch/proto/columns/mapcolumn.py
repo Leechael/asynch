@@ -27,6 +27,9 @@ class MapColumn(Column):
         await self.value_column.write_state_prefix()
 
     async def read_items(self, n_items):
+        if not n_items:
+            return [{}]
+
         offsets = list(await self.offset_column.read_items(n_items))
         last_offset = offsets[-1]
         keys = await self.key_column.read_data(last_offset)

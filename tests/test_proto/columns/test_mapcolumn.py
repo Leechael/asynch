@@ -69,6 +69,16 @@ async def create_table(cursor: Cursor, spec: str):
             ],
             None,
         ],
+        [
+            "a Map(String, Map(String, Int32))",
+            [
+                ({},),
+                ({"key1": {}},),
+                ({"key1": {"nested": 1}},),
+                ({"key1": {"a": 1, "b": 2}, "key2": {"c": 3}},),
+            ],
+            None,
+        ],
     ],
     ids=[
         "simple",
@@ -76,6 +86,7 @@ async def create_table(cursor: Cursor, spec: str):
         "low_cardinally",
         "array",
         "decimal",
+        "nested_map",
     ],
 )
 async def test_map_column(
