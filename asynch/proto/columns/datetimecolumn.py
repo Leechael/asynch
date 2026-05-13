@@ -200,8 +200,9 @@ def create_datetime_column(spec, column_options):
             except Exception:
                 local_timezone = None
 
-            if local_timezone != context.server_info.timezone:
-                tz_name = context.server_info.timezone
+            remote_timezone = context.server_info.get_timezone()
+            if local_timezone != remote_timezone:
+                tz_name = remote_timezone
 
     if tz_name:
         timezone = get_timezone(tz_name)

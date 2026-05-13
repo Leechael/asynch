@@ -24,7 +24,7 @@ class BlockInfo:
                 self.is_overflows = bool(await reader.read_uint8())
 
             elif field_num == 2:
-                self.bucket_num = await reader.read_uint32()
+                self.bucket_num = await reader.read_int32()
 
 
 class BaseBlock:

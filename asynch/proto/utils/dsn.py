@@ -84,10 +84,24 @@ def parse_dsn(dsn: str) -> dict[str, Any]:
                 kwargs[name] = asbool(value)
         elif name == "secure":
             kwargs[name] = asbool(value)
+        elif name == "use_numpy":
+            settings[name] = asbool(value)
+        elif name == "round_robin":
+            kwargs[name] = asbool(value)
         elif name == "client_name":
             kwargs[name] = value
         elif name == "settings_is_important":
             kwargs[name] = asbool(value)
+        elif name == "tcp_keepalive":
+            try:
+                kwargs[name] = asbool(value)
+            except ValueError:
+                idle_time_sec, interval_sec, probes = value.split(",")
+                kwargs[name] = (
+                    int(idle_time_sec),
+                    int(interval_sec),
+                    int(probes),
+                )
         elif name == "client_revision":
             kwargs[name] = int(value)
         elif name in _TIMEOUTS:
@@ -97,9 +111,18 @@ def parse_dsn(dsn: str) -> dict[str, Any]:
         # ssl
         elif name == "verify":
             kwargs[name] = asbool(value)
+        elif name == "check_hostname":
+            kwargs[name] = asbool(value)
         elif name == "ssl_version":
             kwargs[name] = getattr(ssl, value)
-        elif name in ["ca_certs", "ciphers"]:
+        elif name in [
+            "ca_certs",
+            "ciphers",
+            "keyfile",
+            "keypass",
+            "certfile",
+            "server_hostname",
+        ]:
             kwargs[name] = value
         elif name == "alt_hosts":
             kwargs["alt_hosts"] = value

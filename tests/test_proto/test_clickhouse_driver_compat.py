@@ -1,4 +1,5 @@
 import asyncio
+import ssl
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -7,13 +8,15 @@ import pytest
 
 from asynch.errors import UnexpectedPacketFromServerError
 from asynch.proto import constants
-from asynch.proto.block import ColumnOrientedBlock, RowOrientedBlock
+from asynch.proto.block import BlockInfo, ColumnOrientedBlock, RowOrientedBlock
+from asynch.proto.columns.datetimecolumn import create_datetime_column
 from asynch.proto.connection import SUBSTITUTE_PARAMS_STYLE_ENV
 from asynch.proto.connection import Connection as ProtoConnection
 from asynch.proto.context import Context
 from asynch.proto.protocol import ServerPacket
 from asynch.proto.streams.block import BlockWriter
 from asynch.proto.streams.buffered import BufferedReader, BufferedWriter
+from asynch.proto.utils.dsn import parse_dsn
 from asynch.proto.utils.escape import escape_params
 
 
@@ -154,11 +157,57 @@ def test_upstream_protocol_revision_matches_clickhouse_driver_0_2_10():
     assert constants.CLIENT_REVISION == constants.DBMS_MIN_REVISION_WITH_SYSTEM_KEYWORDS_TABLE
 
 
+def test_upstream_client_revision_is_capped_to_supported_revision():
+    conn = ProtoConnection(client_revision=999999)
+
+    assert conn.client_revision == constants.CLIENT_REVISION
+
+
+def test_upstream_dsn_connection_options_are_not_server_settings():
+    config = parse_dsn(
+        "clickhouse://host?"
+        "tcp_keepalive=10,20,30&"
+        "round_robin=1&"
+        "check_hostname=false&"
+        "server_hostname=db.internal&"
+        "keyfile=/tmp/key&"
+        "keypass=pw&"
+        "certfile=/tmp/cert&"
+        "use_numpy=true&"
+        "max_block_size=123"
+    )
+
+    assert config["tcp_keepalive"] == (10, 20, 30)
+    assert config["round_robin"] is True
+    assert config["check_hostname"] is False
+    assert config["server_hostname"] == "db.internal"
+    assert config["keyfile"] == "/tmp/key"
+    assert config["keypass"] == "pw"
+    assert config["certfile"] == "/tmp/cert"
+    assert config["settings"] == {"use_numpy": True, "max_block_size": "123"}
+
+
 def test_upstream_server_side_params_is_client_setting():
     conn = ProtoConnection(settings={"server_side_params": True})
 
     assert conn.client_settings["server_side_params"] is True
     assert "server_side_params" not in conn.settings
+
+
+@pytest.mark.filterwarnings("ignore:ssl.PROTOCOL_TLSv1_2 is deprecated:DeprecationWarning")
+def test_upstream_ssl_context_uses_configured_protocol_version():
+    conn = ProtoConnection(
+        secure=True,
+        verify=False,
+        check_hostname=True,
+        ssl_version=ssl.PROTOCOL_TLSv1_2,
+    )
+
+    context = conn._get_ssl_context()
+
+    assert context.protocol == ssl.PROTOCOL_TLSv1_2
+    assert context.verify_mode == ssl.CERT_NONE
+    assert context.check_hostname is False
 
 
 @pytest.mark.asyncio
@@ -194,6 +243,24 @@ async def test_upstream_receive_hello_tracks_used_revision():
     assert conn.server_info.revision == 54483
     assert conn.server_info.used_revision == constants.CLIENT_REVISION
     assert conn.reader.position == conn.reader.current_buffer_size
+
+
+@pytest.mark.asyncio
+async def test_upstream_connect_tries_alt_hosts_after_failure():
+    conn = ProtoConnection(host="primary", alt_hosts="secondary:9001")
+    attempts = []
+
+    async def fake_init(host, port):
+        attempts.append((host, port))
+        if host == "primary":
+            raise OSError("primary unavailable")
+        conn.connected = True
+        return "connected"
+
+    conn._init_connection = fake_init
+
+    assert await conn.connect() == "connected"
+    assert attempts == [("primary", 9000), ("secondary", 9001)]
 
 
 @pytest.mark.asyncio
@@ -284,6 +351,25 @@ async def test_upstream_block_writer_emits_custom_serialization_marker():
 
 
 @pytest.mark.asyncio
+async def test_upstream_block_info_reads_bucket_num_as_signed_int32():
+    writer = BufferedWriter()
+    info = BlockInfo()
+    info.bucket_num = -1
+
+    await info.write(writer)
+
+    stream = asyncio.StreamReader()
+    stream.feed_data(bytes(writer.buffer))
+    stream.feed_eof()
+    reader = BufferedReader(stream)
+    decoded = BlockInfo()
+
+    await decoded.read(reader)
+
+    assert decoded.bucket_num == -1
+
+
+@pytest.mark.asyncio
 async def test_upstream_receive_timezone_update_packet():
     writer = BufferedWriter()
     await writer.write_varint(ServerPacket.TIMEZONE_UPDATE)
@@ -300,6 +386,27 @@ async def test_upstream_receive_timezone_update_packet():
 
     assert packet.type == ServerPacket.TIMEZONE_UPDATE
     assert conn.server_info.session_timezone == "Asia/Taipei"
+
+
+def test_upstream_datetime_column_uses_session_timezone(monkeypatch):
+    monkeypatch.setattr(
+        "asynch.proto.columns.datetimecolumn.get_localzone",
+        lambda: "Local/Zone",
+    )
+    context = Context()
+    context.settings = {}
+    context.client_settings = {"input_format_null_as_default": False}
+    context.server_info = SimpleNamespace(
+        timezone="UTC",
+        get_timezone=lambda: "Europe/Berlin",
+    )
+
+    column = create_datetime_column(
+        "DateTime",
+        {"context": context, "reader": None, "writer": None},
+    )
+
+    assert column.timezone.zone == "Europe/Berlin"
 
 
 def test_upstream_server_side_params_use_double_escaping():

@@ -1,14 +1,18 @@
 import asyncio
 import logging
 import os
+import socket
 import ssl
+import warnings
 from collections.abc import AsyncGenerator
+from sys import platform
 from time import time
 from types import GeneratorType
 from typing import Any, Iterable, Mapping, Optional, Union
 from urllib.parse import urlparse
 
 from asynch.errors import (
+    NetworkError,
     PartiallyConsumedQueryError,
     ServerException,
     UnexpectedPacketFromServerError,
@@ -104,7 +108,16 @@ class Connection:
         ssl_version=None,
         ca_certs=None,
         ciphers=None,
+        keyfile=None,
+        keypass=None,
+        certfile=None,
+        check_hostname=True,
+        server_hostname=None,
         alt_hosts: str = None,
+        round_robin=False,
+        tcp_keepalive=False,
+        client_revision=None,
+        disable_reconnect=False,
         stack_track=False,
         settings_is_important=False,
         **kwargs,
@@ -125,14 +138,21 @@ class Connection:
         self.user = user
         self.password = password
         self.client_name = constants.DBMS_NAME + " " + client_name
-        self.client_revision = kwargs.pop("client_revision", constants.CLIENT_REVISION)
+        self.client_revision = min(
+            client_revision or constants.CLIENT_REVISION, constants.CLIENT_REVISION
+        )
         self.connect_timeout = connect_timeout
         self.send_receive_timeout = send_receive_timeout
         self.sync_request_timeout = sync_request_timeout
         self.settings_is_important = settings_is_important
+        self.round_robin = round_robin
+        self.tcp_keepalive = tcp_keepalive
+        self.disable_reconnect = disable_reconnect
         self._lock = asyncio.Lock()
         self.secure_socket = secure
         self.verify = verify
+        self.check_hostname = check_hostname if verify else False
+        self.server_hostname = server_hostname
 
         ssl_options = {}
         if ssl_version is not None:
@@ -141,6 +161,12 @@ class Connection:
             ssl_options["ca_certs"] = ca_certs
         if ciphers is not None:
             ssl_options["ciphers"] = ciphers
+        if keyfile is not None:
+            ssl_options["keyfile"] = keyfile
+        if keypass is not None:
+            ssl_options["keypass"] = keypass
+        if certfile is not None:
+            ssl_options["certfile"] = certfile
         self.ssl_options = ssl_options
         # Use LZ4 compression by default.
         if compression is True:
@@ -318,24 +344,54 @@ class Connection:
     def _get_ssl_context(self):
         if not self.secure_socket:
             return None
-        ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        ssl_version = self.ssl_options.get("ssl_version")
-        if ssl_version:
-            ssl_ctx.options |= ssl_version
+        ssl_version = self.ssl_options.get("ssl_version", ssl.PROTOCOL_TLS_CLIENT)
+        try:
+            ssl_ctx = ssl.SSLContext(ssl_version)
+        except ValueError:
+            ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    "ssl.OP_NO_SSL\\*/ssl.OP_NO_TLS\\* options are deprecated",
+                    DeprecationWarning,
+                )
+                ssl_ctx.options |= ssl_version
+        ssl_ctx.check_hostname = self.check_hostname
         ca_certs = self.ssl_options.get("ca_certs")
         if ca_certs:
             ssl_ctx.load_verify_locations(ca_certs)
-        else:
+        elif self.verify:
             ssl_ctx.load_default_certs(ssl.Purpose.SERVER_AUTH)
         ciphers = self.ssl_options.get("ciphers")
         if ciphers:
             ssl_ctx.set_ciphers(ciphers)
         if self.verify:
-            ssl_ctx.verify_mode = ssl.VerifyMode.CERT_REQUIRED
+            ssl_ctx.verify_mode = ssl.CERT_REQUIRED
         else:
             ssl_ctx.check_hostname = False
-            ssl_ctx.verify_mode = ssl.VerifyMode.CERT_NONE
+            ssl_ctx.verify_mode = ssl.CERT_NONE
+        if "certfile" in self.ssl_options:
+            ssl_ctx.load_cert_chain(
+                self.ssl_options["certfile"],
+                keyfile=self.ssl_options.get("keyfile"),
+                password=self.ssl_options.get("keypass"),
+            )
         return ssl_ctx
+
+    def _set_keepalive(self, sock):
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+
+        if not isinstance(self.tcp_keepalive, tuple):
+            return
+
+        idle_time_sec, interval_sec, probes = self.tcp_keepalive
+        if platform == "linux" or platform == "win32":
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, idle_time_sec)
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, interval_sec)
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, probes)
+        elif platform == "darwin":
+            tcp_keepalive = 0x10
+            sock.setsockopt(socket.IPPROTO_TCP, tcp_keepalive, interval_sec)
 
     async def ping(self) -> bool:
         try:
@@ -640,7 +696,19 @@ class Connection:
 
     async def _init_connection(self, host: str, port: int):
         self.host, self.port = host, port
-        reader, writer = await asyncio.open_connection(host, port, ssl=self._get_ssl_context())
+        ssl_context = self._get_ssl_context()
+        server_hostname = self.server_hostname or host if ssl_context else None
+        reader, writer = await asyncio.open_connection(
+            host,
+            port,
+            ssl=ssl_context,
+            server_hostname=server_hostname,
+        )
+        sock = writer.get_extra_info("socket")
+        if sock is not None:
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            if self.tcp_keepalive:
+                self._set_keepalive(sock)
         self.writer = BufferedWriter(writer)
         self.reader = BufferedReader(reader)
         self.block_reader = self.get_block_reader()
@@ -680,9 +748,19 @@ class Connection:
         if self.connected:
             await self.disconnect()
         logger.debug("Connecting. Database: %s. User: %s", self.database, self.user)
+        err = None
         for host, port in self.hosts:
             logger.debug("Connecting to %s:%s", host, port)
-            return await self._init_connection(host, port)
+            try:
+                return await asyncio.wait_for(
+                    self._init_connection(host, port), timeout=self.connect_timeout
+                )
+            except (asyncio.TimeoutError, OSError, ConnectionError) as e:
+                err = e
+                await self.disconnect()
+                logger.warning("Failed to connect to %s:%s", host, port, exc_info=True)
+        if err is not None:
+            raise err
 
     async def execute(
         self,
@@ -861,6 +939,8 @@ class Connection:
             await self.connect()
 
         elif not await self.ping():
+            if self.disable_reconnect:
+                raise NetworkError("Connection was closed, reconnect is disabled.")
             logger.info("Connection was closed, reconnecting.")
             await self.connect()
 
