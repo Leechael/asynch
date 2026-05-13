@@ -183,6 +183,7 @@ class Connection:
             "input_format_null_as_default": self.settings.pop(
                 "input_format_null_as_default", False
             ),
+            "namedtuple_as_json": self.settings.pop("namedtuple_as_json", True),
             "server_side_params": self.settings.pop("server_side_params", False),
         }
         self.last_query: Optional[QueryInfo] = None
@@ -195,6 +196,7 @@ class Connection:
             "opentelemetry_tracestate",
             "quota_key",
             "input_format_null_as_default",
+            "namedtuple_as_json",
             "server_side_params",
         )
         self.context.settings = self.settings

@@ -4,7 +4,7 @@ from .util import get_inner_columns, get_inner_columns_with_types, get_inner_spe
 
 def create_nested_column(spec, column_by_spec_getter, column_options):
     return create_array_column(
-        "Array(Tuple({}))".format(",".join(get_nested_columns(spec))),
+        "Array(Tuple({}))".format(get_inner_spec("Nested", spec)),
         column_by_spec_getter,
         column_options,
     )

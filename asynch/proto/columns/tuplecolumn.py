@@ -1,11 +1,18 @@
 from .base import Column
+from .util import get_inner_columns_with_types, get_inner_spec
 
 
 class TupleColumn(Column):
     py_types = (list, tuple)
 
-    def __init__(self, nested_columns, **kwargs):
+    def __init__(self, names, nested_columns, **kwargs):
+        self.names = names
         self.nested_columns = nested_columns
+        settings = kwargs["context"].settings
+        client_settings = kwargs["context"].client_settings
+        self.namedtuple_as_json = settings.get(
+            "allow_experimental_object_type", False
+        ) and client_settings.get("namedtuple_as_json", True)
         super().__init__(**kwargs)
         self.null_value = tuple(x.null_value for x in nested_columns)
 
@@ -41,7 +48,10 @@ class TupleColumn(Column):
             )
             for x in self.nested_columns
         ]
-        return list(zip(*rv))
+        rv = list(zip(*rv))
+        if self.names[0] and self.namedtuple_as_json:
+            return [dict(zip(self.names, x)) for x in rv]
+        return rv
 
     async def read_items(
         self,
@@ -51,41 +61,19 @@ class TupleColumn(Column):
             n_items,
         )
 
+    async def read_state_prefix(self):
+        for column in self.nested_columns:
+            await column.read_state_prefix()
+
+    async def write_state_prefix(self):
+        for column in self.nested_columns:
+            await column.write_state_prefix()
+
 
 def create_tuple_column(spec, column_by_spec_getter, column_options):
-    brackets = 0
-    column_begin = 0
-
-    inner_spec = get_inner_spec(spec)
-    nested_columns = []
-    for i, x in enumerate(inner_spec + ","):
-        if x == ",":
-            if brackets == 0:
-                nested_columns.append(inner_spec[column_begin:i])
-                column_begin = i + 1
-        elif x == "(":
-            brackets += 1
-        elif x == ")":
-            brackets -= 1
-        elif x == " ":
-            if brackets == 0:
-                column_begin = i + 1
-
-    return TupleColumn([column_by_spec_getter(x) for x in nested_columns], **column_options)
-
-
-def get_inner_spec(spec):
-    brackets = 1
-    offset = len("Tuple(")
-    i = offset
-    for i, ch in enumerate(spec[offset:], offset):
-        if brackets == 0:
-            break
-
-        if ch == "(":
-            brackets += 1
-
-        elif ch == ")":
-            brackets -= 1
-
-    return spec[offset:i]
+    inner_spec = get_inner_spec("Tuple", spec)
+    columns_with_types = get_inner_columns_with_types(inner_spec)
+    names, types = zip(*columns_with_types)
+    return TupleColumn(
+        names, [column_by_spec_getter(column_type) for column_type in types], **column_options
+    )
