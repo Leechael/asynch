@@ -125,6 +125,7 @@ class Connection:
         self.user = user
         self.password = password
         self.client_name = constants.DBMS_NAME + " " + client_name
+        self.client_revision = kwargs.pop("client_revision", constants.CLIENT_REVISION)
         self.connect_timeout = connect_timeout
         self.send_receive_timeout = send_receive_timeout
         self.sync_request_timeout = sync_request_timeout
@@ -238,7 +239,7 @@ class Connection:
         await self.writer.write_str(self.client_name)
         await self.writer.write_varint(constants.CLIENT_VERSION_MAJOR)
         await self.writer.write_varint(constants.CLIENT_VERSION_MINOR)
-        await self.writer.write_varint(constants.CLIENT_REVISION)
+        await self.writer.write_varint(self.client_revision)
         await self.writer.write_str(self.database)
         await self.writer.write_str(self.user)
         await self.writer.write_str(self.password)
@@ -261,7 +262,7 @@ class Connection:
             server_version_major = await self.reader.read_varint()
             server_version_minor = await self.reader.read_varint()
             server_revision = await self.reader.read_varint()
-            used_revision = min(constants.CLIENT_REVISION, server_revision)
+            used_revision = min(self.client_revision, server_revision)
 
             server_timezone = None
             if used_revision >= constants.DBMS_MIN_REVISION_WITH_SERVER_TIMEZONE:
@@ -572,6 +573,7 @@ class Connection:
         if revision >= constants.DBMS_MIN_REVISION_WITH_CLIENT_INFO:
             client_info = ClientInfo(self.client_name, self.writer, self.context)
             client_info.query_kind = QueryKind.INITIAL_QUERY
+            client_info.client_revision = self.client_revision
             await client_info.write(revision)
 
         settings_as_strings = (
