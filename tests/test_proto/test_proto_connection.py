@@ -7,7 +7,12 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from asynch.proto.block import RowOrientedBlock
-from asynch.proto.connection import Connection as ProtoConnection
+from asynch.proto.connection import (
+    SUBSTITUTE_PARAMS_STYLE_ENV,
+)
+from asynch.proto.connection import (
+    Connection as ProtoConnection,
+)
 from asynch.proto.cs import ServerInfo
 
 
@@ -99,10 +104,44 @@ async def test_execute_with_args(proto_conn: ProtoConnection):
 
 
 @pytest.mark.asyncio
+async def test_execute_with_pyformat_args(proto_conn: ProtoConnection, monkeypatch):
+    monkeypatch.setenv(SUBSTITUTE_PARAMS_STYLE_ENV, "pyformat")
+
+    query = "SELECT %(val)s"
+    ret = await proto_conn.execute(query, args={"val": 2})
+    assert ret == [(2,)]
+
+
+@pytest.mark.asyncio
 async def test_execute_with_missing_arg(proto_conn: ProtoConnection):
     query = "SELECT {var}"
     with pytest.raises(KeyError, match="'var'"):
         await proto_conn.execute(query, args={"foo": 1})
+
+
+def test_substitute_params_uses_format_style_by_default(monkeypatch):
+    monkeypatch.delenv(SUBSTITUTE_PARAMS_STYLE_ENV, raising=False)
+
+    query = "SELECT {value}, {name}"
+    params = {"value": 1, "name": "hello"}
+
+    assert ProtoConnection.substitute_params(query, params) == "SELECT 1, 'hello'"
+
+
+def test_substitute_params_supports_pyformat_style(monkeypatch):
+    monkeypatch.setenv(SUBSTITUTE_PARAMS_STYLE_ENV, "pyformat")
+
+    query = "SELECT %(value)s, %(name)s"
+    params = {"value": 1, "name": "hello"}
+
+    assert ProtoConnection.substitute_params(query, params) == "SELECT 1, 'hello'"
+
+
+def test_substitute_params_rejects_unknown_style(monkeypatch):
+    monkeypatch.setenv(SUBSTITUTE_PARAMS_STYLE_ENV, "unknown")
+
+    with pytest.raises(ValueError, match=SUBSTITUTE_PARAMS_STYLE_ENV):
+        ProtoConnection.substitute_params("SELECT {value}", {"value": 1})
 
 
 @pytest.mark.asyncio

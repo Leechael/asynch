@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import ssl
 from collections.abc import AsyncGenerator
 from time import time
@@ -39,6 +40,18 @@ from asynch.proto.utils.escape import escape_params
 from asynch.proto.utils.helpers import chunks, column_chunks
 
 logger = logging.getLogger(__name__)
+
+SUBSTITUTE_PARAMS_STYLE_ENV = "ASYNCH_SUBSTITUTE_PARAMS_STYLE"
+SUBSTITUTE_PARAMS_STYLE_FORMAT = "format"
+SUBSTITUTE_PARAMS_STYLE_PYFORMAT = "pyformat"
+_SUBSTITUTE_PARAMS_STYLE_ALIASES = {
+    "brace": SUBSTITUTE_PARAMS_STYLE_FORMAT,
+    "braces": SUBSTITUTE_PARAMS_STYLE_FORMAT,
+    "format": SUBSTITUTE_PARAMS_STYLE_FORMAT,
+    "legacy": SUBSTITUTE_PARAMS_STYLE_PYFORMAT,
+    "percent": SUBSTITUTE_PARAMS_STYLE_PYFORMAT,
+    "pyformat": SUBSTITUTE_PARAMS_STYLE_PYFORMAT,
+}
 
 
 class QueryProcessingStage:
@@ -806,7 +819,19 @@ class Connection:
         if not isinstance(params, Mapping):
             raise ValueError("Parameters are expected to be a mapping")
 
-        return query.format(**escape_params(params))
+        style = os.environ.get(
+            SUBSTITUTE_PARAMS_STYLE_ENV,
+            SUBSTITUTE_PARAMS_STYLE_FORMAT,
+        ).lower()
+        style = _SUBSTITUTE_PARAMS_STYLE_ALIASES.get(style, style)
+
+        escaped = escape_params(params)
+        if style == SUBSTITUTE_PARAMS_STYLE_FORMAT:
+            return query.format(**escaped)
+        if style == SUBSTITUTE_PARAMS_STYLE_PYFORMAT:
+            return query % escaped
+
+        raise ValueError(f"{SUBSTITUTE_PARAMS_STYLE_ENV} must be one of: format, pyformat")
 
     async def process_insert_query(
         self,
