@@ -19,34 +19,40 @@ escape_chars_map = {
 }
 
 
-def escape_param(item: Any) -> str:
+def escape_param(item: Any, for_server: bool = False) -> str:
     if item is None:
-        return "NULL"
+        escaped = "NULL"
 
     elif isinstance(item, datetime):
-        return "'%s'" % item.strftime("%Y-%m-%d %H:%M:%S")
+        escaped = "'%s'" % item.strftime("%Y-%m-%d %H:%M:%S")
 
     elif isinstance(item, date):
-        return "'%s'" % item.strftime("%Y-%m-%d")
+        escaped = "'%s'" % item.strftime("%Y-%m-%d")
 
     elif isinstance(item, string_types):
-        return "'%s'" % "".join(escape_chars_map.get(c, c) for c in item)
+        if for_server:
+            item = "".join(escape_chars_map.get(c, c) for c in item)
+        escaped = "'%s'" % "".join(escape_chars_map.get(c, c) for c in item)
 
     elif isinstance(item, list):
-        return "[%s]" % ", ".join(text_type(escape_param(x)) for x in item)
+        escaped = "[%s]" % ", ".join(text_type(escape_param(x, for_server=for_server)) for x in item)
 
     elif isinstance(item, tuple):
-        return "(%s)" % ", ".join(text_type(escape_param(x)) for x in item)
+        escaped = "(%s)" % ", ".join(text_type(escape_param(x, for_server=for_server)) for x in item)
 
     elif isinstance(item, Enum):
-        return escape_param(item.value)
+        escaped = escape_param(item.value, for_server=for_server)
 
     elif isinstance(item, UUID):
-        return "'%s'" % str(item)
+        escaped = "'%s'" % str(item)
 
     else:
-        return str(item)
+        escaped = str(item)
+
+    if for_server and not escaped.startswith("'"):
+        escaped = "'%s'" % escaped
+    return escaped
 
 
-def escape_params(params: Mapping[str, Any]) -> dict[str, str]:
-    return {key: escape_param(value) for key, value in params.items()}
+def escape_params(params: Mapping[str, Any], for_server: bool = False) -> dict[str, str]:
+    return {key: escape_param(value, for_server=for_server) for key, value in params.items()}
