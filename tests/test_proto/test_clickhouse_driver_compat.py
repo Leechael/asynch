@@ -120,6 +120,8 @@ async def _server_hello_packet(
     await writer.write_varint(24)
     await writer.write_varint(12)
     await writer.write_varint(server_revision)
+    if used_revision >= constants.DBMS_MIN_REVISION_WITH_VERSIONED_PARALLEL_REPLICAS_PROTOCOL:
+        await writer.write_varint(constants.DBMS_PARALLEL_REPLICAS_PROTOCOL_VERSION)
     await writer.write_str("UTC")
     await writer.write_str("server")
     await writer.write_varint(1)
@@ -174,6 +176,8 @@ def test_upstream_protocol_revision_matches_clickhouse_driver_0_2_10():
     assert constants.DBMS_MIN_REVISION_WITH_TABLE_READ_ONLY_CHECK == 54467
     assert constants.DBMS_MIN_REVISION_WITH_SYSTEM_KEYWORDS_TABLE == 54468
     assert constants.DBMS_MIN_PROTOCOL_VERSION_WITH_CHUNKED_PACKETS == 54470
+    assert constants.DBMS_PARALLEL_REPLICAS_PROTOCOL_VERSION == 7
+    assert constants.DBMS_MIN_REVISION_WITH_VERSIONED_PARALLEL_REPLICAS_PROTOCOL == 54471
     assert constants.CLIENT_REVISION == constants.DBMS_MIN_REVISION_WITH_SYSTEM_KEYWORDS_TABLE
 
 
@@ -301,6 +305,30 @@ async def test_upstream_receive_hello_reads_chunked_capabilities_at_revision_544
 
 
 @pytest.mark.asyncio
+async def test_upstream_receive_hello_reads_parallel_replicas_version_at_revision_54471():
+    stream = asyncio.StreamReader()
+    stream.feed_data(
+        await _server_hello_packet(
+            server_revision=constants.DBMS_MIN_REVISION_WITH_VERSIONED_PARALLEL_REPLICAS_PROTOCOL,
+            used_revision=constants.DBMS_MIN_REVISION_WITH_VERSIONED_PARALLEL_REPLICAS_PROTOCOL,
+        )
+    )
+    stream.feed_eof()
+
+    conn = ProtoConnection()
+    conn.client_revision = constants.DBMS_MIN_REVISION_WITH_VERSIONED_PARALLEL_REPLICAS_PROTOCOL
+    conn.reader = BufferedReader(stream)
+
+    await conn.receive_hello()
+
+    assert (
+        conn.server_info.used_revision
+        == constants.DBMS_MIN_REVISION_WITH_VERSIONED_PARALLEL_REPLICAS_PROTOCOL
+    )
+    await assert_reader_exhausted(conn.reader)
+
+
+@pytest.mark.asyncio
 async def test_upstream_connect_tries_alt_hosts_after_failure():
     conn = ProtoConnection(host="primary", alt_hosts="secondary:9001")
     attempts = []
@@ -363,6 +391,30 @@ async def test_upstream_addendum_writes_chunked_capabilities_at_revision_54470()
     assert value == "quota-1"
     assert send_capability == "notchunked"
     assert recv_capability == "notchunked"
+    assert position == len(conn.writer.buffer)
+
+
+@pytest.mark.asyncio
+async def test_upstream_addendum_writes_parallel_replicas_version_at_revision_54471():
+    conn = ProtoConnection(settings={"quota_key": "quota-1"})
+    conn.writer = BufferedWriter()
+    conn.server_info = SimpleNamespace(
+        revision=constants.DBMS_MIN_REVISION_WITH_VERSIONED_PARALLEL_REPLICAS_PROTOCOL,
+        used_revision=constants.DBMS_MIN_REVISION_WITH_VERSIONED_PARALLEL_REPLICAS_PROTOCOL,
+    )
+
+    await conn.send_addendum()
+
+    position = 0
+    value, position = _read_str(bytes(conn.writer.buffer), position)
+    send_capability, position = _read_str(bytes(conn.writer.buffer), position)
+    recv_capability, position = _read_str(bytes(conn.writer.buffer), position)
+    protocol_version, position = _read_varint(bytes(conn.writer.buffer), position)
+
+    assert value == "quota-1"
+    assert send_capability == "notchunked"
+    assert recv_capability == "notchunked"
+    assert protocol_version == constants.DBMS_PARALLEL_REPLICAS_PROTOCOL_VERSION
     assert position == len(conn.writer.buffer)
 
 

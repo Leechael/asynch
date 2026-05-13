@@ -295,6 +295,12 @@ class Connection:
             server_revision = await self.reader.read_varint()
             used_revision = min(self.client_revision, server_revision)
 
+            if (
+                used_revision
+                >= constants.DBMS_MIN_REVISION_WITH_VERSIONED_PARALLEL_REPLICAS_PROTOCOL
+            ):
+                await self.reader.read_varint()
+
             server_timezone = None
             if used_revision >= constants.DBMS_MIN_REVISION_WITH_SERVER_TIMEZONE:
                 server_timezone = await self.reader.read_str()
@@ -673,6 +679,9 @@ class Connection:
         if revision >= constants.DBMS_MIN_PROTOCOL_VERSION_WITH_CHUNKED_PACKETS:
             await self.writer.write_str("notchunked")
             await self.writer.write_str("notchunked")
+
+        if revision >= constants.DBMS_MIN_REVISION_WITH_VERSIONED_PARALLEL_REPLICAS_PROTOCOL:
+            await self.writer.write_varint(constants.DBMS_PARALLEL_REPLICAS_PROTOCOL_VERSION)
 
         await self.writer.flush()
 
