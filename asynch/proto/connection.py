@@ -1149,11 +1149,9 @@ class Connection:
             )
             await self.send_block(block)
             inserted_rows += block.num_rows
-            await self.receive_profile_events()
 
         # Empty block means end of data.
         await self.send_block(block_cls())
-        await self.receive_profile_events()
         return inserted_rows
 
     async def receive_profile_events(self):

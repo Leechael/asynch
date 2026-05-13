@@ -1006,7 +1006,7 @@ def test_upstream_server_side_params_use_double_escaping():
 
 
 @pytest.mark.asyncio
-async def test_upstream_send_data_receives_profile_events_after_each_block():
+async def test_upstream_send_data_sends_all_blocks_before_receiving_insert_end():
     conn = ProtoConnection()
     conn.context.client_settings = {"insert_block_size": 1}
     conn.send_block = AsyncMock()
@@ -1017,7 +1017,7 @@ async def test_upstream_send_data_receives_profile_events_after_each_block():
 
     assert result == 2
     assert conn.send_block.await_count == 3
-    assert conn.receive_profile_events.await_count == 3
+    conn.receive_profile_events.assert_not_awaited()
 
 
 @pytest.mark.asyncio
