@@ -857,9 +857,23 @@ class Connection:
             rv = await self.send_data(
                 sample_block, data, types_check=types_check, columnar=columnar
             )
-            while await self.receive_packet():
-                pass
+            await self.receive_end_of_insert_query()
             return rv
+
+    async def receive_end_of_insert_query(self):
+        while True:
+            packet = await self.receive_packet()
+
+            if not packet:
+                break
+
+            if packet is True:
+                continue
+
+            message = self.unexpected_packet_message(
+                "EndOfStream, Log, Progress or Exception", packet.type
+            )
+            raise UnexpectedPacketFromServerError(message)
 
     async def receive_sample_block(self):
         while True:
@@ -896,10 +910,44 @@ class Connection:
             )
             await self.send_block(block)
             inserted_rows += block.num_rows
+            await self.receive_profile_events()
 
         # Empty block means end of data.
         await self.send_block(block_cls())
+        await self.receive_profile_events()
         return inserted_rows
+
+    async def receive_profile_events(self):
+        if self.server_info is None:
+            return
+
+        revision = min(constants.CLIENT_REVISION, self.server_info.revision)
+        if revision < constants.DBMS_MIN_PROTOCOL_VERSION_WITH_PROFILE_EVENTS_IN_INSERT:
+            return
+
+        while True:
+            packet = await self._receive_packet()
+
+            if packet.type == ServerPacket.PROFILE_EVENTS:
+                if self.last_query is not None:
+                    self.last_query.store_profile(packet.block)
+                break
+
+            if packet.type == ServerPacket.PROGRESS:
+                if self.last_query is not None:
+                    self.last_query.store_progress(packet.progress)
+                continue
+
+            if packet.type == ServerPacket.LOG:
+                continue
+
+            if packet.type == ServerPacket.EXCEPTION:
+                raise packet.exception
+
+            message = self.unexpected_packet_message(
+                "ProfileEvents, Progress, Log or Exception", packet.type
+            )
+            raise UnexpectedPacketFromServerError(message)
 
     async def iter_process_ordinary_query(
         self,
