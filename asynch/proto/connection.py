@@ -337,6 +337,12 @@ class Connection:
             if used_revision >= constants.DBMS_MIN_REVISION_WITH_QUERY_PLAN_SERIALIZATION:
                 await self.reader.read_varint()
 
+            if (
+                used_revision
+                >= constants.DBMS_MIN_REVISION_WITH_VERSIONED_CLUSTER_FUNCTION_PROTOCOL
+            ):
+                await self.reader.read_varint()
+
             self.server_info = ServerInfo(
                 server_name,
                 server_version_major,
