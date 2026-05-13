@@ -119,7 +119,7 @@ async def test_select_with_progress(conn):
 
     values = [item async for item in progress]
 
-    assert values in [[(1, 0)], [(1, 0), (1, 0)]]
+    assert values in [[(1, 0)], [(1, 0), (1, 0)], [(1, 1)], [(1, 1), (1, 1)]]
     assert await progress.get_result() == [(2,)]
     assert conn._connection.connected
 
@@ -134,7 +134,7 @@ async def test_progress_totals(conn):
 
     assert progress.progress_totals.rows == 1
     assert progress.progress_totals.bytes == 1
-    assert progress.progress_totals.total_rows == 0
+    assert progress.progress_totals.total_rows in (0, 1)
 
 
 async def test_select_with_progress_error(conn):

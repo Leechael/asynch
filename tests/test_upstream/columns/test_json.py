@@ -9,6 +9,16 @@ pytestmark = pytest.mark.asyncio
 JSON_SETTINGS = {"allow_experimental_object_type": True}
 
 
+@pytest.fixture(autouse=True)
+async def require_object_json(conn):
+    has_object_json = await execute(
+        conn,
+        "SELECT count() FROM system.data_type_families WHERE name = 'Object'",
+    )
+    if not has_object_json[0][0]:
+        pytest.skip("ClickHouse server does not expose Object('json')")
+
+
 def json_table(conn, columns):
     return create_table(conn, columns, settings=JSON_SETTINGS)
 

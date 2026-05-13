@@ -119,7 +119,7 @@ async def test_datetime(conn):
 
 
 @pytest.mark.asyncio
-async def test_datetime_with_timezone(conn):
+async def test_datetime_with_timezone(conn, monkeypatch):
     dt = datetime(2017, 7, 14, 5, 40, 0)
     aware = timezone("Asia/Kamchatka").localize(dt)
     params = {"x": aware}
@@ -133,6 +133,10 @@ async def test_datetime_with_timezone(conn):
     expected_server_dt = instant.astimezone(server_tz).replace(tzinfo=None)
     expected_client_dt = instant.astimezone(timezone("Asia/Novosibirsk")).replace(tzinfo=None)
     expected_epoch = int(instant.timestamp())
+    monkeypatch.setattr(
+        "asynch.proto.columns.datetimecolumn.get_localzone",
+        lambda: timezone("Asia/Novosibirsk"),
+    )
 
     with patch_env_tz("Asia/Novosibirsk"):
         rv = await execute(conn, tpl, params, settings={"use_client_time_zone": False})

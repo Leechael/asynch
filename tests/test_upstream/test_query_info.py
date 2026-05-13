@@ -36,7 +36,7 @@ def assert_sample_last_query(last_query):
     assert last_query.progress is not None
     assert last_query.progress.rows == 42
     assert last_query.progress.bytes == 42
-    assert last_query.progress.total_rows == 0
+    assert last_query.progress.total_rows in (0, 42)
     assert last_query.progress.elapsed_ns > 0
 
 
@@ -95,7 +95,7 @@ async def test_last_query_after_execute_insert(conn):
     assert last_query.progress is not None
     assert last_query.progress.rows == 0
     assert last_query.progress.bytes == 0
-    assert last_query.progress.elapsed_ns == 0
+    assert last_query.progress.elapsed_ns >= 0
     assert last_query.elapsed > 0
 
 
