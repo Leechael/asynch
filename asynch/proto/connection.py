@@ -790,7 +790,7 @@ class Connection:
 
         await self.send_query(query, query_id=query_id, params=params)
         await self.send_external_tables(external_tables, types_check=types_check)
-        return self.receive_result(
+        return await self.receive_result(
             with_column_types=with_column_types, progress=True, columnar=columnar
         )
 

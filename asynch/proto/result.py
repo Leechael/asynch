@@ -81,6 +81,9 @@ class ProgressQueryResult(QueryResult):
     def __iter__(self):
         return self
 
+    def __aiter__(self):
+        return self
+
     def __next__(self):
         while True:
             packet = next(self.packet_generator)
@@ -91,9 +94,23 @@ class ProgressQueryResult(QueryResult):
             else:
                 self.store(packet)
 
+    async def __anext__(self):
+        while True:
+            try:
+                packet = await self.packet_generator.__anext__()
+            except StopAsyncIteration:
+                raise StopAsyncIteration
+
+            progress_packet = getattr(packet, "progress", None)
+            if progress_packet:
+                self.progress_totals.increment(progress_packet)
+                return self.progress_totals.rows, self.progress_totals.total_rows
+
+            self.store(packet)
+
     async def get_result(self):
         # Read all progress packets.
-        for _ in self:
+        async for _ in self:
             pass
 
         return await super().get_result()
