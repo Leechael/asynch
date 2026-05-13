@@ -19,6 +19,7 @@ from asynch.proto.streams.block import BlockWriter
 from asynch.proto.streams.buffered import BufferedReader, BufferedWriter
 from asynch.proto.utils.dsn import parse_dsn
 from asynch.proto.utils.escape import escape_params
+from tests.test_proto.protocol_helpers import assert_reader_exhausted
 
 
 def _read_varint(buffer: bytes, position: int) -> tuple[int, int]:
@@ -107,7 +108,12 @@ def _skip_block_info(buffer: bytes, position: int) -> int:
             raise AssertionError(f"Unexpected block info field {field_num}")
 
 
-async def _server_hello_packet(*, server_revision: int) -> bytes:
+async def _server_hello_packet(
+    *,
+    server_revision: int,
+    used_revision: int | None = None,
+) -> bytes:
+    used_revision = constants.CLIENT_REVISION if used_revision is None else used_revision
     writer = BufferedWriter()
     await writer.write_varint(ServerPacket.HELLO)
     await writer.write_str("ClickHouse")
@@ -117,6 +123,9 @@ async def _server_hello_packet(*, server_revision: int) -> bytes:
     await writer.write_str("UTC")
     await writer.write_str("server")
     await writer.write_varint(1)
+    if used_revision >= constants.DBMS_MIN_PROTOCOL_VERSION_WITH_CHUNKED_PACKETS:
+        await writer.write_str("notchunked")
+        await writer.write_str("notchunked")
     await writer.write_varint(0)  # password complexity rules size
     await writer.write_uint64(42)  # interserver secret v2 nonce
     return bytes(writer.buffer)
@@ -164,6 +173,7 @@ def test_upstream_protocol_revision_matches_clickhouse_driver_0_2_10():
     assert constants.DBMS_MIN_REVISION_WITH_SSH_AUTHENTICATION == 54466
     assert constants.DBMS_MIN_REVISION_WITH_TABLE_READ_ONLY_CHECK == 54467
     assert constants.DBMS_MIN_REVISION_WITH_SYSTEM_KEYWORDS_TABLE == 54468
+    assert constants.DBMS_MIN_PROTOCOL_VERSION_WITH_CHUNKED_PACKETS == 54470
     assert constants.CLIENT_REVISION == constants.DBMS_MIN_REVISION_WITH_SYSTEM_KEYWORDS_TABLE
 
 
@@ -270,6 +280,27 @@ async def test_upstream_receive_hello_tracks_used_revision():
 
 
 @pytest.mark.asyncio
+async def test_upstream_receive_hello_reads_chunked_capabilities_at_revision_54470():
+    stream = asyncio.StreamReader()
+    stream.feed_data(
+        await _server_hello_packet(
+            server_revision=54470,
+            used_revision=constants.DBMS_MIN_PROTOCOL_VERSION_WITH_CHUNKED_PACKETS,
+        )
+    )
+    stream.feed_eof()
+
+    conn = ProtoConnection()
+    conn.client_revision = constants.DBMS_MIN_PROTOCOL_VERSION_WITH_CHUNKED_PACKETS
+    conn.reader = BufferedReader(stream)
+
+    await conn.receive_hello()
+
+    assert conn.server_info.used_revision == constants.DBMS_MIN_PROTOCOL_VERSION_WITH_CHUNKED_PACKETS
+    await assert_reader_exhausted(conn.reader)
+
+
+@pytest.mark.asyncio
 async def test_upstream_connect_tries_alt_hosts_after_failure():
     conn = ProtoConnection(host="primary", alt_hosts="secondary:9001")
     attempts = []
@@ -297,6 +328,41 @@ async def test_upstream_addendum_writes_quota_key_for_revision_54458():
 
     value, position = _read_str(bytes(conn.writer.buffer), 0)
     assert value == "quota-1"
+    assert position == len(conn.writer.buffer)
+
+
+@pytest.mark.asyncio
+async def test_upstream_addendum_omits_chunked_capabilities_before_revision_54470():
+    conn = ProtoConnection(settings={"quota_key": "quota-1"})
+    conn.writer = BufferedWriter()
+    conn.server_info = SimpleNamespace(revision=54469, used_revision=54469)
+
+    await conn.send_addendum()
+
+    value, position = _read_str(bytes(conn.writer.buffer), 0)
+    assert value == "quota-1"
+    assert position == len(conn.writer.buffer)
+
+
+@pytest.mark.asyncio
+async def test_upstream_addendum_writes_chunked_capabilities_at_revision_54470():
+    conn = ProtoConnection(settings={"quota_key": "quota-1"})
+    conn.writer = BufferedWriter()
+    conn.server_info = SimpleNamespace(
+        revision=constants.DBMS_MIN_PROTOCOL_VERSION_WITH_CHUNKED_PACKETS,
+        used_revision=constants.DBMS_MIN_PROTOCOL_VERSION_WITH_CHUNKED_PACKETS,
+    )
+
+    await conn.send_addendum()
+
+    position = 0
+    value, position = _read_str(bytes(conn.writer.buffer), position)
+    send_capability, position = _read_str(bytes(conn.writer.buffer), position)
+    recv_capability, position = _read_str(bytes(conn.writer.buffer), position)
+
+    assert value == "quota-1"
+    assert send_capability == "notchunked"
+    assert recv_capability == "notchunked"
     assert position == len(conn.writer.buffer)
 
 

@@ -307,6 +307,10 @@ class Connection:
             if used_revision >= constants.DBMS_MIN_REVISION_WITH_VERSION_PATCH:
                 server_version_patch = await self.reader.read_varint()
 
+            if used_revision >= constants.DBMS_MIN_PROTOCOL_VERSION_WITH_CHUNKED_PACKETS:
+                await self.reader.read_str()
+                await self.reader.read_str()
+
             if used_revision >= constants.DBMS_MIN_PROTOCOL_VERSION_WITH_PASSWORD_COMPLEXITY_RULES:
                 rules_size = await self.reader.read_varint()
                 for _ in range(rules_size):
@@ -665,6 +669,10 @@ class Connection:
 
         if revision >= constants.DBMS_MIN_PROTOCOL_VERSION_WITH_QUOTA_KEY:
             await self.writer.write_str(self.context.client_settings["quota_key"])
+
+        if revision >= constants.DBMS_MIN_PROTOCOL_VERSION_WITH_CHUNKED_PACKETS:
+            await self.writer.write_str("notchunked")
+            await self.writer.write_str("notchunked")
 
         await self.writer.flush()
 
