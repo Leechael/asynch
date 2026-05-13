@@ -116,7 +116,7 @@ async def test_execute_with_pyformat_args(proto_conn: ProtoConnection, monkeypat
 
 @pytest.mark.asyncio
 async def test_execute_with_missing_arg(proto_conn: ProtoConnection):
-    query = "SELECT {var}"
+    query = "SELECT %(var)s"
     with pytest.raises(KeyError, match="'var'"):
         await proto_conn.execute(query, args={"foo": 1})
 
