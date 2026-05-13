@@ -1,13 +1,88 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import leb128
 import pytest
 
 from asynch.errors import UnexpectedPacketFromServerError
+from asynch.proto import constants
 from asynch.proto.block import RowOrientedBlock
 from asynch.proto.connection import SUBSTITUTE_PARAMS_STYLE_ENV
 from asynch.proto.connection import Connection as ProtoConnection
 from asynch.proto.protocol import ServerPacket
+from asynch.proto.streams.buffered import BufferedWriter
+from asynch.proto.utils.escape import escape_params
+
+
+def _read_varint(buffer: bytes, position: int) -> tuple[int, int]:
+    chunk = bytearray()
+    while True:
+        if position >= len(buffer):
+            raise AssertionError("Unexpected end of query packet")
+        byte = buffer[position]
+        position += 1
+        chunk.append(byte)
+        if byte < 0x80:
+            break
+    return leb128.u.decode(chunk), position
+
+
+def _read_str(buffer: bytes, position: int) -> tuple[str, int]:
+    length, position = _read_varint(buffer, position)
+    value = buffer[position : position + length].decode()
+    return value, position + length
+
+
+def _read_settings_as_strings(buffer: bytes, position: int) -> tuple[dict[str, tuple[int, str]], int]:
+    settings = {}
+    while True:
+        name, position = _read_str(buffer, position)
+        if not name:
+            break
+        flags = buffer[position]
+        position += 1
+        value, position = _read_str(buffer, position)
+        settings[name] = (flags, value)
+    return settings, position
+
+
+async def _send_query_to_buffer(
+    monkeypatch,
+    *,
+    revision: int,
+    settings: dict | None = None,
+    params: dict | None = None,
+) -> bytes:
+    async def fake_write(self, revision):
+        return None
+
+    monkeypatch.setattr("asynch.proto.connection.ClientInfo.write", fake_write)
+
+    conn = ProtoConnection(settings=settings or {})
+    conn.connected = True
+    conn.writer = BufferedWriter()
+    conn.server_info = SimpleNamespace(revision=revision, used_revision=revision)
+
+    await conn.send_query(
+        "SELECT {value:String}",
+        query_id="query-id",
+        params=params,
+    )
+    return bytes(conn.writer.buffer)
+
+
+def _skip_query_packet_to_parameters(buffer: bytes) -> tuple[dict[str, tuple[int, str]], int]:
+    position = 0
+
+    _, position = _read_varint(buffer, position)  # ClientPacket.QUERY
+    _, position = _read_str(buffer, position)  # query_id
+    _, position = _read_settings_as_strings(buffer, position)  # settings
+    _, position = _read_str(buffer, position)  # interserver secret
+    _, position = _read_varint(buffer, position)  # processing stage
+    _, position = _read_varint(buffer, position)  # compression
+    _, position = _read_str(buffer, position)  # query
+
+    return _read_settings_as_strings(buffer, position)
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -30,6 +105,20 @@ def test_upstream_substitute_params_uses_pyformat_by_default(monkeypatch):
         )
         == "SELECT 1, 'hello'"
     )
+
+
+def test_upstream_protocol_revision_matches_clickhouse_driver_0_2_10():
+    assert constants.DBMS_MIN_REVISION_WITH_CUSTOM_SERIALIZATION == 54454
+    assert constants.DBMS_MIN_PROTOCOL_VERSION_WITH_ADDENDUM == 54458
+    assert constants.DBMS_MIN_PROTOCOL_VERSION_WITH_QUOTA_KEY == 54458
+    assert constants.DBMS_MIN_PROTOCOL_VERSION_WITH_PARAMETERS == 54459
+    assert constants.DBMS_MIN_PROTOCOL_VERSION_WITH_SERVER_QUERY_TIME_IN_PROGRESS == 54460
+    assert constants.DBMS_MIN_PROTOCOL_VERSION_WITH_PASSWORD_COMPLEXITY_RULES == 54461
+    assert constants.DBMS_MIN_REVISION_WITH_INTERSERVER_SECRET_V2 == 54462
+    assert constants.DBMS_MIN_PROTOCOL_VERSION_WITH_TOTAL_BYTES_IN_PROGRESS == 54463
+    assert constants.DBMS_MIN_PROTOCOL_VERSION_WITH_TIMEZONE_UPDATES == 54464
+    assert constants.DBMS_MIN_REVISION_WITH_SYSTEM_KEYWORDS_TABLE == 54468
+    assert constants.CLIENT_REVISION == constants.DBMS_MIN_REVISION_WITH_SYSTEM_KEYWORDS_TABLE
 
 
 def test_upstream_server_side_params_is_client_setting():
@@ -56,6 +145,75 @@ async def test_upstream_server_side_params_defer_local_substitution():
         query_id=None,
         params={"value": 1},
     )
+
+
+@pytest.mark.asyncio
+async def test_upstream_addendum_writes_quota_key_for_revision_54458():
+    conn = ProtoConnection(settings={"quota_key": "quota-1"})
+    conn.writer = BufferedWriter()
+    conn.server_info = SimpleNamespace(revision=54468, used_revision=54458)
+
+    await conn.send_addendum()
+
+    value, position = _read_str(bytes(conn.writer.buffer), 0)
+    assert value == "quota-1"
+    assert position == len(conn.writer.buffer)
+
+
+@pytest.mark.asyncio
+async def test_upstream_send_query_writes_empty_parameters_block_when_disabled(monkeypatch):
+    buffer = await _send_query_to_buffer(
+        monkeypatch,
+        revision=54468,
+        params={"value": "hello"},
+    )
+
+    settings, position = _skip_query_packet_to_parameters(buffer)
+
+    assert settings == {}
+    assert position == len(buffer)
+
+
+@pytest.mark.asyncio
+async def test_upstream_send_query_writes_server_side_parameters(monkeypatch):
+    buffer = await _send_query_to_buffer(
+        monkeypatch,
+        revision=54468,
+        settings={"server_side_params": True},
+        params={"value": "hello"},
+    )
+
+    settings, position = _skip_query_packet_to_parameters(buffer)
+
+    assert settings == {"value": (0x2, "'hello'")}
+    assert position == len(buffer)
+
+
+@pytest.mark.asyncio
+async def test_upstream_send_query_omits_parameters_before_revision_54459(monkeypatch):
+    buffer = await _send_query_to_buffer(
+        monkeypatch,
+        revision=54458,
+        settings={"server_side_params": True},
+        params={"value": "hello"},
+    )
+
+    position = 0
+    _, position = _read_varint(buffer, position)  # ClientPacket.QUERY
+    _, position = _read_str(buffer, position)  # query_id
+    _, position = _read_settings_as_strings(buffer, position)  # settings
+    _, position = _read_str(buffer, position)  # interserver secret
+    _, position = _read_varint(buffer, position)  # processing stage
+    _, position = _read_varint(buffer, position)  # compression
+    _, position = _read_str(buffer, position)  # query
+
+    assert position == len(buffer)
+
+
+def test_upstream_server_side_params_use_double_escaping():
+    assert escape_params({"value": "\t"}, for_server=True) == {"value": "'\\\\t'"}
+    assert escape_params({"value": "\\"}, for_server=True) == {"value": "'\\\\\\\\'"}
+    assert escape_params({"value": "'"}, for_server=True) == {"value": "'\\\\\\''"}
 
 
 @pytest.mark.asyncio
