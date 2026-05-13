@@ -258,17 +258,28 @@ class Connection:
             server_version_major = await self.reader.read_varint()
             server_version_minor = await self.reader.read_varint()
             server_revision = await self.reader.read_varint()
+            used_revision = min(constants.CLIENT_REVISION, server_revision)
+
             server_timezone = None
-            if server_revision >= constants.DBMS_MIN_REVISION_WITH_SERVER_TIMEZONE:
+            if used_revision >= constants.DBMS_MIN_REVISION_WITH_SERVER_TIMEZONE:
                 server_timezone = await self.reader.read_str()
 
             server_display_name = ""
-            if server_revision >= constants.DBMS_MIN_REVISION_WITH_SERVER_DISPLAY_NAME:
+            if used_revision >= constants.DBMS_MIN_REVISION_WITH_SERVER_DISPLAY_NAME:
                 server_display_name = await self.reader.read_str()
 
             server_version_patch = server_revision
-            if server_revision >= constants.DBMS_MIN_REVISION_WITH_VERSION_PATCH:
+            if used_revision >= constants.DBMS_MIN_REVISION_WITH_VERSION_PATCH:
                 server_version_patch = await self.reader.read_varint()
+
+            if used_revision >= constants.DBMS_MIN_PROTOCOL_VERSION_WITH_PASSWORD_COMPLEXITY_RULES:
+                rules_size = await self.reader.read_varint()
+                for _ in range(rules_size):
+                    await self.reader.read_str()  # pattern
+                    await self.reader.read_str()  # exception_message
+
+            if used_revision >= constants.DBMS_MIN_REVISION_WITH_INTERSERVER_SECRET_V2:
+                await self.reader.read_uint64()
 
             self.server_info = ServerInfo(
                 server_name,
@@ -278,16 +289,18 @@ class Connection:
                 server_revision,
                 server_timezone,
                 server_display_name,
+                used_revision,
             )
             self.context.server_info = self.server_info
 
             logger.debug(
-                "Connected to %s server version %s.%s.%s, revision: %s",
+                "Connected to %s server version %s.%s.%s, revision: %s, used revision: %s",
                 server_name,
                 server_version_major,
                 server_version_minor,
                 server_version_patch,
                 server_revision,
+                used_revision,
             )
         elif packet_type == ServerPacket.EXCEPTION:
             raise await self.read_exception()
@@ -353,7 +366,7 @@ class Connection:
         return False
 
     async def receive_data(self, raw=False):
-        revision = self.server_info.revision
+        revision = self.server_info.used_revision
         if revision >= constants.DBMS_MIN_REVISION_WITH_TEMPORARY_TABLES:
             await self.reader.read_str()
         return await (self.block_reader_raw if raw else self.block_reader).read()
@@ -523,7 +536,7 @@ class Connection:
     async def receive_progress(self):
         progress = Progress(self.reader)
         await progress.read(
-            self.server_info.revision,
+            self.server_info.used_revision,
         )
         return progress
 
@@ -539,7 +552,7 @@ class Connection:
     ):
         await self.writer.write_varint(ClientPacket.QUERY)
         await self.writer.write_str(query_id)
-        revision = self.server_info.revision
+        revision = self.server_info.used_revision
         if revision >= constants.DBMS_MIN_REVISION_WITH_CLIENT_INFO:
             client_info = ClientInfo(self.client_name, self.writer, self.context)
             client_info.query_kind = QueryKind.INITIAL_QUERY
@@ -817,7 +830,7 @@ class Connection:
     async def send_block(self, block, table_name=""):
         await self.writer.write_varint(ClientPacket.DATA)
 
-        revision = self.server_info.revision
+        revision = self.server_info.used_revision
         if revision >= constants.DBMS_MIN_REVISION_WITH_TEMPORARY_TABLES:
             await self.writer.write_str(
                 table_name,
@@ -865,10 +878,8 @@ class Connection:
             return rv
 
     async def receive_end_of_insert_query(self):
-        count = 0
         while True:
             packet = await self.receive_packet()
-            count += 1
 
             if not packet:
                 break
@@ -880,7 +891,6 @@ class Connection:
                 "EndOfStream, Log, Progress or Exception", packet.type
             )
             raise UnexpectedPacketFromServerError(message)
-        print(f"[ASYNCH DEBUG] receive_end_of_insert_query drained {count} packets")
 
     async def receive_sample_block(self):
         while True:
@@ -928,7 +938,7 @@ class Connection:
         if self.server_info is None:
             return
 
-        revision = min(constants.CLIENT_REVISION, self.server_info.revision)
+        revision = self.server_info.used_revision
         if revision < constants.DBMS_MIN_PROTOCOL_VERSION_WITH_PROFILE_EVENTS_IN_INSERT:
             return
 

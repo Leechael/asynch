@@ -12,7 +12,7 @@ class BlockWriter:
         self.context = context
 
     async def write(self, block: BaseBlock):
-        revision = self.context.server_info.revision
+        revision = self.context.server_info.used_revision
         if revision >= constants.DBMS_MIN_REVISION_WITH_BLOCK_INFO:
             await block.info.write(self.writer)
 
@@ -62,7 +62,7 @@ class BlockReader:
     async def read(self):
         info = BlockInfo()
 
-        revision = self.context.server_info.revision
+        revision = self.context.server_info.used_revision
         if revision >= constants.DBMS_MIN_REVISION_WITH_BLOCK_INFO:
             await info.read(self.reader)
 

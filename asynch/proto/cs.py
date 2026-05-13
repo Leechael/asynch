@@ -19,6 +19,7 @@ class ServerInfo:
         revision: int,
         timezone: str,
         display_name: str,
+        used_revision: int,
     ):
         self.name = name
         self.version_major = version_major
@@ -27,6 +28,7 @@ class ServerInfo:
         self.revision = revision
         self.timezone = timezone
         self.display_name = display_name
+        self.used_revision = used_revision
 
     def version_tuple(self):
         return self.version_major, self.version_minor, self.version_patch
