@@ -178,6 +178,7 @@ def test_upstream_protocol_revision_matches_clickhouse_driver_0_2_10():
     assert constants.DBMS_MIN_PROTOCOL_VERSION_WITH_CHUNKED_PACKETS == 54470
     assert constants.DBMS_PARALLEL_REPLICAS_PROTOCOL_VERSION == 7
     assert constants.DBMS_MIN_REVISION_WITH_VERSIONED_PARALLEL_REPLICAS_PROTOCOL == 54471
+    assert constants.DBMS_MIN_PROTOCOL_VERSION_WITH_INTERSERVER_EXTERNALLY_GRANTED_ROLES == 54472
     assert constants.CLIENT_REVISION == constants.DBMS_MIN_REVISION_WITH_SYSTEM_KEYWORDS_TABLE
 
 
@@ -466,6 +467,44 @@ async def test_upstream_send_query_omits_parameters_before_revision_54459(monkey
     _, position = _read_str(buffer, position)  # query
 
     assert position == len(buffer)
+
+
+@pytest.mark.asyncio
+async def test_upstream_send_query_omits_external_roles_before_revision_54472(monkeypatch):
+    buffer = await _send_query_to_buffer(
+        monkeypatch,
+        revision=constants.DBMS_MIN_REVISION_WITH_VERSIONED_PARALLEL_REPLICAS_PROTOCOL,
+    )
+
+    position = 0
+    _, position = _read_varint(buffer, position)  # ClientPacket.QUERY
+    _, position = _read_str(buffer, position)  # query_id
+    _, position = _read_settings_as_strings(buffer, position)  # settings
+    interserver_secret, position = _read_str(buffer, position)
+    stage, position = _read_varint(buffer, position)
+
+    assert interserver_secret == ""
+    assert stage == 2
+
+
+@pytest.mark.asyncio
+async def test_upstream_send_query_writes_external_roles_at_revision_54472(monkeypatch):
+    buffer = await _send_query_to_buffer(
+        monkeypatch,
+        revision=constants.DBMS_MIN_PROTOCOL_VERSION_WITH_INTERSERVER_EXTERNALLY_GRANTED_ROLES,
+    )
+
+    position = 0
+    _, position = _read_varint(buffer, position)  # ClientPacket.QUERY
+    _, position = _read_str(buffer, position)  # query_id
+    _, position = _read_settings_as_strings(buffer, position)  # settings
+    external_roles, position = _read_str(buffer, position)
+    interserver_secret, position = _read_str(buffer, position)
+    stage, position = _read_varint(buffer, position)
+
+    assert external_roles == ""
+    assert interserver_secret == ""
+    assert stage == 2
 
 
 @pytest.mark.asyncio

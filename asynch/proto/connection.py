@@ -709,6 +709,11 @@ class Connection:
         await write_settings(
             self.writer, self.context.settings, settings_as_strings, settings_flags
         )
+        if (
+            revision
+            >= constants.DBMS_MIN_PROTOCOL_VERSION_WITH_INTERSERVER_EXTERNALLY_GRANTED_ROLES
+        ):
+            await self.writer.write_str("")
         if revision >= constants.DBMS_MIN_REVISION_WITH_INTERSERVER_SECRET:
             await self.writer.write_str("")
         await self.writer.write_varint(QueryProcessingStage.COMPLETE)
