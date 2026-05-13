@@ -185,7 +185,10 @@ def create_datetime_column(spec, column_options):
             spec = params[1].strip() + ")"
     else:
         cls = DateTimeColumn
-        spec = spec[9:]
+        if spec.startswith("DateTime32"):
+            spec = spec[10:]
+        else:
+            spec = spec[9:]
 
     context = column_options["context"]
 

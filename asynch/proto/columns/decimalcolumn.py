@@ -99,6 +99,18 @@ class Decimal256Column(DecimalColumn, Int256Column):
 
 
 def create_decimal_column(spec, column_options):
+    exact_types = {
+        "Decimal32": (Decimal32Column, 9),
+        "Decimal64": (Decimal64Column, 18),
+        "Decimal128": (Decimal128Column, 38),
+        "Decimal256": (Decimal256Column, 76),
+    }
+
+    for name, (cls, precision) in exact_types.items():
+        if spec.startswith(name):
+            scale = int(spec[len(name) + 1 : -1])
+            return cls(precision, scale, **column_options)
+
     precision, scale = spec[8:-1].split(",")
     precision, scale = int(precision), int(scale)
 
