@@ -3,7 +3,7 @@ from asyncio import StreamReader, StreamWriter
 
 import leb128
 
-from asynch.errors import OperationalError
+from asynch.errors import OperationalError, TooLargeStringSize
 from asynch.proto import constants
 from asynch.proto.compression import BaseCompressor, get_decompressor_cls
 
@@ -56,6 +56,8 @@ class BufferedWriter:
                 packet = item.encode()
             else:
                 packet = item
+            if len(packet) > length:
+                raise TooLargeStringSize()
             await self.write_bytes(packet.ljust(length, b"\x00"))
 
     async def close(self) -> None:
@@ -165,8 +167,11 @@ class BufferedReader:
     async def read_fixed_str(self, length: int, as_bytes: bool = False):
         packet = await self.read_bytes(length)
         if as_bytes:
-            return packet
-        return packet.decode()
+            return bytes(packet)
+        try:
+            return packet.decode()
+        except UnicodeDecodeError:
+            return bytes(packet)
 
     async def read_str(self, as_bytes: bool = False):
         length = await self.read_varint()

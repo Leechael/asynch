@@ -9,13 +9,37 @@ class String(Column):
     null_value = ""
     read_as_bytes = False
 
+    def __init__(self, *args, **kwargs):
+        context = kwargs.get("context")
+        self.encoding = "utf-8"
+        if context is not None:
+            self.encoding = context.client_settings["strings_encoding"]
+        super().__init__(*args, **kwargs)
+
+    def check_item_for_write(self, item):
+        if not isinstance(item, (str, bytes)):
+            item.encode()
+
     async def write_items(self, items):
-        await self.writer.write_strings(items)
+        prepared = []
+        for item in items:
+            self.check_item_for_write(item)
+            if isinstance(item, str):
+                item = item.encode(self.encoding)
+            prepared.append(item)
+        await self.writer.write_strings(prepared)
 
     async def read_items(self, n_items):
         ret = []
         for _ in range(n_items):
-            ret.append(await self.reader.read_str(as_bytes=self.read_as_bytes))
+            packet = await self.reader.read_str(as_bytes=True)
+            if self.read_as_bytes:
+                ret.append(packet)
+                continue
+            try:
+                ret.append(packet.decode(self.encoding))
+            except UnicodeDecodeError:
+                ret.append(packet)
         return tuple(ret)
 
 
@@ -23,6 +47,10 @@ class ByteString(String):
     py_types = (bytes,)
     null_value = b""
     read_as_bytes = True
+
+    def check_item_for_write(self, item):
+        if not isinstance(item, bytes):
+            raise ValueError("bytes object expected")
 
 
 class FixedString(String):
@@ -34,12 +62,26 @@ class FixedString(String):
         super().__init__(reader, writer, **kwargs)
 
     async def write_items(self, items):
-        await self.writer.write_fixed_strings(items, self.length)
+        prepared = []
+        for item in items:
+            self.check_item_for_write(item)
+            if isinstance(item, str):
+                item = item.encode(self.encoding)
+            prepared.append(item)
+        await self.writer.write_fixed_strings(prepared, self.length)
 
     async def read_items(self, n_items):
         ret = []
         for _ in range(n_items):
-            ret.append(await self.reader.read_fixed_str(self.length, as_bytes=self.read_as_bytes))
+            packet = await self.reader.read_fixed_str(self.length, as_bytes=True)
+            if self.read_as_bytes:
+                ret.append(packet)
+                continue
+            packet = packet.rstrip(b"\x00")
+            try:
+                ret.append(packet.decode(self.encoding))
+            except UnicodeDecodeError:
+                ret.append(packet)
         return tuple(ret)
 
 
@@ -47,6 +89,10 @@ class ByteFixedString(FixedString):
     py_types = (bytearray, bytes)
     null_value = b""
     read_as_bytes = True
+
+    def check_item_for_write(self, item):
+        if not isinstance(item, bytes):
+            raise ValueError("bytes object expected")
 
 
 def create_string_column(spec, column_options):
