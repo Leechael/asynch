@@ -199,6 +199,9 @@ class Connection:
         self.context.settings = self.settings
         self.context.client_settings = self.client_settings
 
+    def reset_last_query(self):
+        self.last_query = None
+
     def get_block_reader(self):
         if self.compression:
             from asynch.proto.streams.compressed import CompressedBlockReader
