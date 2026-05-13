@@ -17,10 +17,11 @@ roundtrip tests or parser-level coverage:
 - Strings: `String`, `FixedString`
 - Domain/simple: `Bool`, `UUID`, `IPv4`, `IPv6`, `Nothing`, `Null`
 - Enum: `Enum`, `Enum8`, `Enum16`
-- Containers/wrappers: `Array`, `Tuple`, `Nested`, `Nullable`, `LowCardinality`, `SimpleAggregateFunction`, `Map`
+- Containers/wrappers: `Array`, `Tuple`, `Nested`, `Nullable`, `LowCardinality`, `SimpleAggregateFunction`, `AggregateFunction`, `Map`
 - Intervals: `IntervalNanosecond`, `IntervalMicrosecond`, `IntervalMillisecond`, `IntervalSecond`, `IntervalMinute`, `IntervalHour`, `IntervalDay`, `IntervalWeek`, `IntervalMonth`, `IntervalQuarter`, `IntervalYear`
-- Geo aliases: `Point`, `LineString`, `MultiLineString`, `Ring`, `Polygon`, `MultiPolygon`
-- Legacy object JSON: `Object('json')`
+- Geo aliases: `Point`, `LineString`, `MultiLineString`, `Ring`, `Polygon`, `MultiPolygon`, `Geometry`
+- Semi-structured and dynamic: `JSON`, legacy `Object('json')`, `Dynamic`, `Variant`
+- Vector/quantized: `QBit`
 
 ## Supported Aliases
 
@@ -33,18 +34,31 @@ ClickHouse aliases now normalize before column construction:
 - Decimal aliases: `DEC`, `NUMERIC`, `FIXED`
 - Other aliases: `TIMESTAMP`, `INET4`, `INET6`, `bool`, `boolean`, `ENUM`
 
+## Support Notes
+
+The following families have dedicated Native serialization and are covered by
+layout-level tests plus real ClickHouse roundtrip tests:
+
+- `Variant` uses the basic discriminator stream and nested variant streams. For
+  inserts, ambiguous values can be tagged as `("TypeName", value)` or
+  `{"type": "TypeName", "value": value}`.
+- `Dynamic` supports V1/V2 structure serialization and writes V1-compatible
+  Native data. Values can be inferred or explicitly tagged with the same
+  convention as `Variant`.
+- `JSON` supports modern `JSON` separately from legacy `Object('json')`. Writes
+  use ClickHouse's Native string serialization; reads support the structured
+  V1/V2/V3 object layout for ordinary dynamic paths.
+- `QBit` supports `BFloat16`, `Float32`, and `Float64` element encodings with
+  ClickHouse's bit-plane tuple layout.
+- `Geometry` is implemented as ClickHouse's `Variant(LineString,
+  MultiLineString, MultiPolygon, Point, Polygon, Ring)`.
+- `AggregateFunction` states are function-specific. Built-in Native decoding is
+  implemented for `count`, numeric `sum`, and numeric `avg`; other aggregate
+  states intentionally remain unsupported until their binary state layouts are
+  implemented explicitly.
+
 ## Not Yet Supported
 
-These families exist in modern ClickHouse, but require dedicated native
-substream/custom serialization that is not compatible with the existing
-single-column primitives:
-
-- `AggregateFunction`
-- `Dynamic`
-- `Geometry` / `GEOMETRY` because it is backed by `Variant(...)`
-- `JSON` (the modern type, distinct from legacy `Object('json')`)
-- `QBit`
-- `Variant`
-
-They should remain explicit `UnknownTypeError` cases until their binary layouts
-are implemented and covered by real ClickHouse roundtrip tests.
+No complete generic decoder exists for arbitrary `AggregateFunction(...)`
+states, because ClickHouse delegates those bytes to each aggregate function's
+own state serializer.

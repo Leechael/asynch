@@ -5,12 +5,14 @@ from ...errors import (
     UnknownTypeError,
 )
 from ..streams.buffered import BufferedReader, BufferedWriter
+from .aggregatefunctioncolumn import create_aggregate_function_column
 from .arraycolumn import create_array_column
 from .bfloat16column import BFloat16Column
 from .boolcolumn import BoolColumn
 from .datecolumn import Date32Column, DateColumn
 from .datetimecolumn import create_datetime_column
 from .decimalcolumn import create_decimal_column
+from .dynamiccolumn import create_dynamic_column
 from .enumcolumn import create_enum_column
 from .floatcolumn import Float32, Float64
 from .intcolumn import (
@@ -48,11 +50,13 @@ from .nestedcolumn import create_nested_column
 from .nothingcolumn import NothingColumn
 from .nullablecolumn import create_nullable_column
 from .nullcolumn import NullColumn
+from .qbitcolumn import create_qbit_column
 from .simpleaggregatefunctioncolumn import create_simple_aggregate_function_column
 from .stringcolumn import create_string_column
 from .timecolumn import create_time_column
 from .tuplecolumn import create_tuple_column
 from .uuidcolumn import UUIDColumn
+from .variantcolumn import create_variant_column
 
 column_by_type = {
     c.ch_type: c
@@ -168,6 +172,7 @@ type_aliases = {
     "INET4": "IPv4",
     "INET6": "IPv6",
     "ENUM": "Enum",
+    "GEOMETRY": "Geometry",
 }
 
 aliases = [
@@ -178,6 +183,10 @@ aliases = [
     ("Ring", "Array(Point)"),
     ("Polygon", "Array(Ring)"),
     ("MultiPolygon", "Array(Polygon)"),
+    (
+        "Geometry",
+        "Variant(LineString, MultiLineString, MultiPolygon, Point, Polygon, Ring)",
+    ),
     # End Geo types
 ]
 
@@ -236,8 +245,19 @@ def get_column_by_spec(spec, column_options):
     elif spec.startswith("SimpleAggregateFunction"):
         return create_simple_aggregate_function_column(spec, create_column_with_options)
 
+    elif spec.startswith("AggregateFunction"):
+        return create_aggregate_function_column(spec, column_options)
+
     elif spec.startswith("Map"):
         return create_map_column(spec, create_column_with_options, column_options)
+    elif spec.startswith("Variant"):
+        return create_variant_column(spec, create_column_with_options, column_options)
+    elif spec == "Dynamic":
+        return create_dynamic_column(create_column_with_options, column_options)
+    elif spec.startswith("QBit"):
+        return create_qbit_column(spec, column_options)
+    elif spec == "JSON" or spec.startswith("JSON("):
+        return create_json_column(spec, create_column_with_options, column_options)
     elif spec.startswith("Object('json')"):
         return create_json_column(spec, create_column_with_options, column_options)
     else:
