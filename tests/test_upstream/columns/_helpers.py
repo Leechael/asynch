@@ -8,9 +8,13 @@ async def execute(conn, query, args=None, **kwargs):
 
 
 @asynccontextmanager
-async def create_table(conn, columns):
+async def create_table(conn, columns, settings=None):
     await execute(conn, f"DROP TABLE IF EXISTS {TABLE_NAME}")
-    await execute(conn, f"CREATE TABLE {TABLE_NAME} ({columns}) ENGINE=Memory")
+    await execute(
+        conn,
+        f"CREATE TABLE {TABLE_NAME} ({columns}) ENGINE=Memory",
+        settings=settings,
+    )
     try:
         yield TABLE_NAME
     finally:
