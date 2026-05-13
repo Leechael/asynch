@@ -582,6 +582,13 @@ class Connection:
 
         await self.writer.write_str(query)
 
+        if revision >= constants.DBMS_MIN_PROTOCOL_VERSION_WITH_PARAMETERS:
+            if self.context.client_settings["server_side_params"]:
+                escaped = escape_params(params or {}, for_server=True)
+            else:
+                escaped = {}
+            await write_settings(self.writer, escaped, True, SettingsFlags.CUSTOM)
+
         logger.debug("Query: %s", query)
 
         await self.writer.flush()
