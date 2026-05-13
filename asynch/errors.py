@@ -399,12 +399,23 @@ class Error(Exception):
     Defined for DB-API v2.0 compatibility.
     """
 
+    code = None
+
+    def __init__(self, message=None):
+        self.message = message
+        super().__init__(message)
+
+    def __str__(self):
+        message = " " + self.message if self.message is not None else ""
+        return f"Code: {self.code}.{message}"
+
 
 class ClickHouseException(Error):
     code: Union[None, int] = None
 
     def __init__(self, message=None):
         self.message = message
+        super().__init__(message)
 
     def __str__(self):
         message = " " + self.message if self.message is not None else ""
@@ -412,10 +423,11 @@ class ClickHouseException(Error):
 
 
 class ServerException(ClickHouseException):
-    def __init__(self, message, code, nested=None):
+    def __init__(self, message, code=None, nested=None):
         self.message = message
         self.code = code
         self.nested = nested
+        super().__init__(message)
 
     def __str__(self):
         nested = f"\nNested: {self.nested}" if self.nested else ""
