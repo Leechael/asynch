@@ -133,8 +133,8 @@ def test_connection_status_offline():
 
 
 @pytest.mark.asyncio
-async def test_connection_status_online():
-    conn = Connection()
+async def test_connection_status_online(config):
+    conn = Connection(dsn=config.dsn)
     conn_id = id(conn)
 
     repstr = f"<{conn.__class__.__name__} object at 0x{conn_id:x}"
@@ -157,8 +157,8 @@ async def test_connection_status_online():
 
 
 @pytest.mark.asyncio
-async def test_async_context_manager_interface():
-    conn = Connection()
+async def test_async_context_manager_interface(config):
+    conn = Connection(dsn=config.dsn)
     _test_connectivity_invariant(conn=conn)
 
     async with conn:
@@ -177,8 +177,8 @@ async def test_async_context_manager_interface():
 
 
 @pytest.mark.asyncio
-async def test_connection_ping():
-    conn = Connection()  # default
+async def test_connection_ping(config):
+    conn = Connection(dsn=config.dsn)
 
     with pytest.raises(ConnectionError):
         await conn.ping()
@@ -195,7 +195,7 @@ async def test_connection_ping():
 
 
 @pytest.mark.asyncio
-async def test_connection_cleanup(get_tcp_connections):
+async def test_connection_cleanup(config, get_tcp_connections):
     """Test a connection to be properly closed.
 
     A connection is properly closed if it releases resources,
@@ -210,13 +210,13 @@ async def test_connection_cleanup(get_tcp_connections):
 
     # get the number of total TCP connections to the ClickHouse
     init_tcps = 0
-    conn = Connection()
+    conn = Connection(dsn=config.dsn)
     async with conn as cn:
         init_tcps = await get_tcp_connections(cn)
 
     # open-execute-close connections
     for _ in range(100):
-        async with Connection() as cn:
+        async with Connection(dsn=config.dsn) as cn:
             async with cn.cursor() as cur:
                 await cur.execute("SELECT 1")
                 ret = await cur.fetchone()
@@ -230,7 +230,7 @@ async def test_connection_cleanup(get_tcp_connections):
 
 
 @pytest.mark.asyncio
-async def test_connection_close():
+async def test_connection_close(config):
     conn = Connection()
 
     # it does not break
@@ -239,7 +239,7 @@ async def test_connection_close():
     assert not conn.opened
     assert conn.closed
 
-    async with Connection() as conn:
+    async with Connection(dsn=config.dsn) as conn:
         assert conn.opened
 
         await conn.close()

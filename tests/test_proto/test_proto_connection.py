@@ -19,6 +19,7 @@ async def proto_conn(config) -> AsyncIterator[ProtoConnection]:
         host=config.host,
         port=config.port,
         database=config.database,
+        settings=config.settings,
     )
     await _conn.connect()
     yield _conn

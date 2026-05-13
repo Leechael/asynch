@@ -8,10 +8,12 @@ from asyncio import StreamReader, StreamWriter
 import pytest
 
 from asynch import Pool
-from tests.conftest import CONNECTION_DSN
+from tests.conftest import CONNECTION_DSN, CONNECTION_HOST, CONNECTION_PORT
 
 HOST = "localhost"
 PORT = 9001
+DST_HOST = CONNECTION_HOST
+DST_PORT = int(CONNECTION_PORT)
 TIMEOUT = 1  # in seconds
 
 logger = logging.getLogger(__name__)
@@ -26,7 +28,7 @@ async def proxy(request):
     It can kill the connection either gracefully (TCP FIN packet), or ungracefully (TCP RST packet).
     """
 
-    handler = functools.partial(handle_proxy, 9000, request.param == "graceful")
+    handler = functools.partial(handle_proxy, DST_HOST, DST_PORT, request.param == "graceful")
     server = await asyncio.start_server(handler, host=HOST, port=PORT)
     async with server:
         logger.info(f"Proxy {server} started")
@@ -40,7 +42,8 @@ async def proxy(request):
 
 @pytest.fixture()
 async def proxy_pool(proxy):
-    async with Pool(minsize=1, maxsize=1, dsn=CONNECTION_DSN.replace("9000", "9001")) as pool:
+    proxy_dsn = CONNECTION_DSN.replace(f"{DST_HOST}:{DST_PORT}", f"{HOST}:{PORT}")
+    async with Pool(minsize=1, maxsize=1, dsn=proxy_dsn) as pool:
         yield pool
 
 
@@ -88,11 +91,11 @@ async def reader_to_writer(name: str, graceful: bool, reader: StreamReader, writ
 
 
 async def handle_proxy(
-    dst_port: int, graceful: bool, src_reader: StreamReader, src_writer: StreamWriter
+    dst_host: str, dst_port: int, graceful: bool, src_reader: StreamReader, src_writer: StreamWriter
 ):
-    dst_reader, dst_writer = await asyncio.open_connection(HOST, dst_port)
+    dst_reader, dst_writer = await asyncio.open_connection(dst_host, dst_port)
 
-    connstr = f"{HOST}:{dst_port}"
+    connstr = f"{dst_host}:{dst_port}"
     logger.info(f"Opened connection to {connstr}")
 
     src_dst = reader_to_writer("SRC->DST", graceful, src_reader, dst_writer)

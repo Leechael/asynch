@@ -11,20 +11,29 @@ from asynch.cursors import DictCursor
 from asynch.proto import constants
 from asynch.proto.context import Context
 from asynch.proto.streams.buffered import BufferedReader, BufferedWriter
+from asynch.proto.utils.dsn import parse_dsn
 
-CONNECTION_USER = environ.get("CLICKHOUSE_USER", default=constants.DEFAULT_USER)
-CONNECTION_PASSWORD = environ.get("CLICKHOUSE_PASSWORD", default=constants.DEFAULT_PASSWORD)
-CONNECTION_HOST = environ.get("CLICKHOUSE_HOST", default=constants.DEFAULT_HOST)
-CONNECTION_PORT = environ.get("CLICKHOUSE_PORT", default=constants.DEFAULT_PORT)
-CONNECTION_DB = environ.get("CLICKHOUSE_DB", default=constants.DEFAULT_DATABASE)
-CONNECTION_DSN = environ.get(
-    "CLICKHOUSE_DSN",
-    default=(
+CONNECTION_DSN = environ.get("CLICKHOUSE_DSN")
+if CONNECTION_DSN:
+    _dsn_config = parse_dsn(CONNECTION_DSN)
+    CONNECTION_USER = _dsn_config.get("user", constants.DEFAULT_USER)
+    CONNECTION_PASSWORD = _dsn_config.get("password", constants.DEFAULT_PASSWORD)
+    CONNECTION_HOST = _dsn_config.get("host", constants.DEFAULT_HOST)
+    CONNECTION_PORT = _dsn_config.get("port", constants.DEFAULT_PORT)
+    CONNECTION_DB = _dsn_config.get("database", constants.DEFAULT_DATABASE)
+    CONNECTION_SETTINGS = _dsn_config.get("settings", {})
+else:
+    CONNECTION_USER = environ.get("CLICKHOUSE_USER", default=constants.DEFAULT_USER)
+    CONNECTION_PASSWORD = environ.get("CLICKHOUSE_PASSWORD", default=constants.DEFAULT_PASSWORD)
+    CONNECTION_HOST = environ.get("CLICKHOUSE_HOST", default=constants.DEFAULT_HOST)
+    CONNECTION_PORT = environ.get("CLICKHOUSE_PORT", default=constants.DEFAULT_PORT)
+    CONNECTION_DB = environ.get("CLICKHOUSE_DB", default=constants.DEFAULT_DATABASE)
+    CONNECTION_SETTINGS = {}
+    CONNECTION_DSN = (
         f"clickhouse://{CONNECTION_USER}:{CONNECTION_PASSWORD}"
         f"@{CONNECTION_HOST}:{CONNECTION_PORT}"
         f"/{CONNECTION_DB}"
-    ),
-)
+    )
 
 
 @dataclass
@@ -35,6 +44,7 @@ class Config:
     host: str
     port: int
     database: str
+    settings: dict[str, Any]
 
 
 @pytest.fixture(scope="session")
@@ -46,6 +56,7 @@ def config() -> Config:
         host=CONNECTION_HOST,
         port=int(CONNECTION_PORT),
         database=CONNECTION_DB,
+        settings=CONNECTION_SETTINGS,
     )
 
 
