@@ -544,6 +544,14 @@ class Connection:
         await self.writer.write_varint(ClientPacket.CANCEL)
         await self.writer.flush()
 
+    async def send_addendum(self):
+        revision = self.server_info.used_revision
+
+        if revision >= constants.DBMS_MIN_PROTOCOL_VERSION_WITH_QUOTA_KEY:
+            await self.writer.write_str(self.context.client_settings["quota_key"])
+
+        await self.writer.flush()
+
     async def send_query(
         self,
         query: str,
@@ -587,6 +595,8 @@ class Connection:
         self.connected = True
         await self.send_hello()
         await self.receive_hello()
+        if self.server_info.used_revision >= constants.DBMS_MIN_PROTOCOL_VERSION_WITH_ADDENDUM:
+            await self.send_addendum()
 
     def reset_state(self):
         self.writer = None
