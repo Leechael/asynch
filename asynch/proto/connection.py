@@ -866,7 +866,7 @@ class Connection:
     @staticmethod
     def substitute_params(query: str, params: Mapping[str, Any], context=None) -> str:
         if not isinstance(params, Mapping):
-            raise ValueError("Parameters are expected to be a mapping")
+            raise ValueError("Parameters are expected in dict form")
 
         style = os.environ.get(
             SUBSTITUTE_PARAMS_STYLE_ENV,
