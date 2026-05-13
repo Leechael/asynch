@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -10,7 +11,7 @@ from asynch.proto.block import RowOrientedBlock
 from asynch.proto.connection import SUBSTITUTE_PARAMS_STYLE_ENV
 from asynch.proto.connection import Connection as ProtoConnection
 from asynch.proto.protocol import ServerPacket
-from asynch.proto.streams.buffered import BufferedWriter
+from asynch.proto.streams.buffered import BufferedReader, BufferedWriter
 from asynch.proto.utils.escape import escape_params
 
 
@@ -85,6 +86,21 @@ def _skip_query_packet_to_parameters(buffer: bytes) -> tuple[dict[str, tuple[int
     return _read_settings_as_strings(buffer, position)
 
 
+async def _server_hello_packet(*, server_revision: int) -> bytes:
+    writer = BufferedWriter()
+    await writer.write_varint(ServerPacket.HELLO)
+    await writer.write_str("ClickHouse")
+    await writer.write_varint(24)
+    await writer.write_varint(12)
+    await writer.write_varint(server_revision)
+    await writer.write_str("UTC")
+    await writer.write_str("server")
+    await writer.write_varint(1)
+    await writer.write_varint(0)  # password complexity rules size
+    await writer.write_uint64(42)  # interserver secret v2 nonce
+    return bytes(writer.buffer)
+
+
 @pytest.fixture(scope="session", autouse=True)
 async def initialize_tests():
     yield
@@ -145,6 +161,22 @@ async def test_upstream_server_side_params_defer_local_substitution():
         query_id=None,
         params={"value": 1},
     )
+
+
+@pytest.mark.asyncio
+async def test_upstream_receive_hello_tracks_used_revision():
+    stream = asyncio.StreamReader()
+    stream.feed_data(await _server_hello_packet(server_revision=54483))
+    stream.feed_eof()
+
+    conn = ProtoConnection()
+    conn.reader = BufferedReader(stream)
+
+    await conn.receive_hello()
+
+    assert conn.server_info.revision == 54483
+    assert conn.server_info.used_revision == constants.CLIENT_REVISION
+    assert conn.reader.position == conn.reader.current_buffer_size
 
 
 @pytest.mark.asyncio
