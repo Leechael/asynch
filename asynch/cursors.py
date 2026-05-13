@@ -49,7 +49,7 @@ class Cursor:
         :rtype: str (CursorStatus StrEnum)
         """
 
-        return self._state
+        return self._state.value
 
     def setinputsizes(self, *args):
         """Does nothing, required by DB API."""

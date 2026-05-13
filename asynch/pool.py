@@ -81,11 +81,11 @@ class Pool:
         """
 
         if not (self._opened or self._closed):
-            return PoolStatus.created
+            return PoolStatus.created.value
         if self._opened and not self._closed:
-            return PoolStatus.opened
+            return PoolStatus.opened.value
         if self._closed and not self._opened:
-            return PoolStatus.closed
+            return PoolStatus.closed.value
         raise AsynchPoolError(f"{self} is in an unknown state")
 
     @property

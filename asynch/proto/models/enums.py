@@ -1,31 +1,36 @@
 from enum import Enum
 
 
-class CompressionAlgorithm(str, Enum):
+class StrEnum(str, Enum):
+    def __str__(self) -> str:
+        return self.value
+
+
+class CompressionAlgorithm(StrEnum):
     lz4 = "lz4"
     lz4hc = "lz4hc"
     zstd = "zstd"
 
 
-class ConnectionStatus(str, Enum):
+class ConnectionStatus(StrEnum):
     created = "created"
     opened = "opened"
     closed = "closed"
 
 
-class CursorStatus(str, Enum):
+class CursorStatus(StrEnum):
     ready = "ready"
     running = "running"
     finished = "finished"
     closed = "closed"
 
 
-class PoolStatus(str, Enum):
+class PoolStatus(StrEnum):
     created = "created"
     opened = "opened"
     closed = "closed"
 
 
-class ClickhouseScheme(str, Enum):
+class ClickhouseScheme(StrEnum):
     clickhouse = "clickhouse"
     clickhouses = "clickhouses"

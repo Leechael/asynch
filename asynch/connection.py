@@ -96,11 +96,11 @@ class Connection:
         """
 
         if not (self._opened or self._closed):
-            return ConnectionStatus.created
+            return ConnectionStatus.created.value
         if self._opened and not self._closed:
-            return ConnectionStatus.opened
+            return ConnectionStatus.opened.value
         if self._closed and not self._opened:
-            return ConnectionStatus.closed
+            return ConnectionStatus.closed.value
         raise ConnectionError(f"{self} is in an unknown state")
 
     @property
