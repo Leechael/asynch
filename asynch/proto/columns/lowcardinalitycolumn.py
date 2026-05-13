@@ -50,12 +50,14 @@ class LowCardinalityColumn(Column):
     ):
         index, keys = [], []
         key_by_index_element = {}
+        nested_is_nullable = False
 
         if self.nested_column.nullable:
             # First element represents NULL if column is nullable.
             index.append(self.nested_column.null_value)
             # Prevent null map writing. Reset nested column nullable flag.
             self.nested_column.nullable = False
+            nested_is_nullable = True
 
             for x in items:
                 if x is None:
@@ -95,9 +97,15 @@ class LowCardinalityColumn(Column):
         await self.writer.write_int64(serialization_type)
         await self.writer.write_int64(len(index))
 
-        await self.nested_column.write_data(
-            index,
-        )
+        if nested_is_nullable:
+            # The leading dictionary element is the NULL sentinel. Write it
+            # directly so types like Date do not treat it as a normal value.
+            await self.nested_column.write_items([self.nested_column.null_value])
+            await self.nested_column.write_data(index[1:])
+        else:
+            await self.nested_column.write_data(
+                index,
+            )
         await self.writer.write_int64(len(items))
 
         await int_column.write_data(
