@@ -236,7 +236,9 @@ def test_upstream_protocol_revision_matches_clickhouse_driver_0_2_10():
     assert constants.DBMS_MIN_REVISION_WITH_VERSIONED_CLUSTER_FUNCTION_PROTOCOL == 54479
     assert constants.DBMS_MIN_REVISION_WITH_OUT_OF_ORDER_BUCKETS_IN_AGGREGATION == 54480
     assert constants.DBMS_MIN_REVISION_WITH_COMPRESSED_LOGS_PROFILE_EVENTS_COLUMNS == 54481
-    assert constants.CLIENT_REVISION == constants.DBMS_MIN_REVISION_WITH_SYSTEM_KEYWORDS_TABLE
+    assert constants.DBMS_MIN_REVISION_WITH_REPLICATED_SERIALIZATION == 54482
+    assert constants.DBMS_MIN_REVISION_WITH_NULLABLE_SPARSE_SERIALIZATION == 54483
+    assert constants.CLIENT_REVISION == constants.DBMS_MIN_REVISION_WITH_NULLABLE_SPARSE_SERIALIZATION
 
 
 def test_upstream_packet_type_names_cover_protocol_54468_packets():

@@ -94,3 +94,16 @@ async def test_client_revision(config):
         rv = await _execute(conn, "SELECT 1")
 
     assert rv == [(1,)]
+
+
+async def test_default_client_revision_negotiates_server_cap(config):
+    async with Connection(**_connection_kwargs(config)) as conn:
+        rv = await _execute(conn, "SELECT 1")
+
+        assert conn._connection.client_revision == constants.CLIENT_REVISION
+        assert conn._connection.server_info.used_revision == min(
+            conn._connection.server_info.revision,
+            constants.CLIENT_REVISION,
+        )
+
+    assert rv == [(1,)]
