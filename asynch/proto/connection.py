@@ -33,7 +33,7 @@ from asynch.proto.result import (
     QueryInfo,
     QueryResult,
 )
-from asynch.proto.settings import write_settings
+from asynch.proto.settings import SettingsFlags, write_settings
 from asynch.proto.streams.block import BlockReader, BlockWriter
 from asynch.proto.streams.buffered import BufferedReader, BufferedWriter
 from asynch.proto.utils.escape import escape_params
@@ -569,8 +569,11 @@ class Connection:
         settings_as_strings = (
             revision >= constants.DBMS_MIN_REVISION_WITH_SETTINGS_SERIALIZED_AS_STRINGS
         )
+        settings_flags = 0
+        if self.settings_is_important:
+            settings_flags |= SettingsFlags.IMPORTANT
         await write_settings(
-            self.writer, self.context.settings, settings_as_strings, self.settings_is_important
+            self.writer, self.context.settings, settings_as_strings, settings_flags
         )
         if revision >= constants.DBMS_MIN_REVISION_WITH_INTERSERVER_SECRET:
             await self.writer.write_str("")
