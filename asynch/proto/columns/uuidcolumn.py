@@ -60,7 +60,10 @@ class UUIDColumn(FormatColumn):
 
             try:
                 if not isinstance(item, UUID):
-                    item = UUID(item)
+                    if item == null_value:
+                        item = UUID(int=item)
+                    else:
+                        item = UUID(item)
 
             except ValueError:
                 raise CannotParseUuidError(f"Cannot parse uuid '{item}'")
