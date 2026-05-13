@@ -175,6 +175,29 @@ async def insert_tuple():
         assert ret == 1
 ```
 
+### ClickHouse async inserts and read-after-write
+
+`asynch` uses ClickHouse's native protocol. The visibility of inserted rows is controlled by the ClickHouse server settings.
+
+If the server has `async_insert=1` and `wait_for_async_insert=0`, an `INSERT` may return after ClickHouse accepts the data into its async insert buffer, before the rows are visible to a following `SELECT`. In that setup, this can return no rows even though `execute()` completed:
+
+```python
+async with conn.cursor() as cursor:
+    await cursor.execute("INSERT INTO test.asynch(id) VALUES", [(1,)])
+    await cursor.execute("SELECT id FROM test.asynch WHERE id = 1")
+    rows = await cursor.fetchall()
+```
+
+For read-after-write behavior, either configure ClickHouse with `wait_for_async_insert=1`, or set it on the insert cursor:
+
+```python
+async with conn.cursor() as cursor:
+    cursor.set_settings({"wait_for_async_insert": 1})
+    await cursor.execute("INSERT INTO test.asynch(id) VALUES", [(1,)])
+```
+
+This is a ClickHouse server behavior, not Python `async` behavior. The async driver only makes socket I/O non-blocking; `async_insert` changes when ClickHouse reports an insert as complete.
+
 ### Connection Pool
 
 Before the v0.2.4:
