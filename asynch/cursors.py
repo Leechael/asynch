@@ -42,6 +42,18 @@ class Cursor:
         return self._rowcount
 
     @property
+    def arraysize(self):
+        return self._arraysize
+
+    @arraysize.setter
+    def arraysize(self, value):
+        self._arraysize = value
+
+    @property
+    def columns_with_types(self):
+        return self._columns_with_types
+
+    @property
     def status(self) -> str:
         """Return the status of the cursor.
 
@@ -55,6 +67,9 @@ class Cursor:
         """Does nothing, required by DB API."""
 
     def setoutputsizes(self, *args):
+        """Does nothing, required by DB API."""
+
+    def setoutputsize(self, *args):
         """Does nothing, required by DB API."""
 
     async def close(self):
@@ -135,7 +150,7 @@ class Cursor:
             return None
         return self._rows.pop(0)
 
-    async def fetchmany(self, size: Optional[int]):
+    async def fetchmany(self, size: Optional[int] = None):
         self._check_query_started()
 
         if size is None:
@@ -370,10 +385,10 @@ class DictCursor(Cursor):
 
         row = await super().fetchone()
         if self._columns:
-            return dict(zip(self._columns, row)) if row else {}
+            return dict(zip(self._columns, row)) if row else None
         raise AttributeError("Invalid columns.")
 
-    async def fetchmany(self, size: Optional[int]) -> list[dict]:
+    async def fetchmany(self, size: Optional[int] = None) -> list[dict]:
         """Fetch no more than `size` rows from the last executed query.
 
         :param size Optional[int]: fetch upt to the `size` entries or self._arraysize if None
