@@ -44,6 +44,9 @@ class ClientPacket:
     # Reply to SSH signature challenge.
     SSH_CHALLENGE_RESPONSE = 12
 
+    # Query plan.
+    QUERY_PLAN = 13
+
     _types_str = [
         "Hello",
         "Query",
@@ -58,11 +61,12 @@ class ClientPacket:
         "MergeTreeReadTaskResponse",
         "SSHChallengeRequest",
         "SSHChallengeResponse",
+        "QueryPlan",
     ]
 
     @classmethod
     def to_str(cls, packet):
-        return "Unknown packet" if packet > 12 else cls._types_str[packet]
+        return "Unknown packet" if packet > 13 else cls._types_str[packet]
 
 
 class ServerPacket:

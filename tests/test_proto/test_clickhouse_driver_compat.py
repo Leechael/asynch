@@ -172,6 +172,8 @@ async def _server_hello_packet(
         await writer.write_uint8(0)
         await writer.write_str("8")
         await writer.write_str("")
+    if used_revision >= constants.DBMS_MIN_REVISION_WITH_QUERY_PLAN_SERIALIZATION:
+        await writer.write_varint(constants.DBMS_QUERY_PLAN_SERIALIZATION_VERSION)
     return bytes(writer.buffer)
 
 
@@ -225,6 +227,8 @@ def test_upstream_protocol_revision_matches_clickhouse_driver_0_2_10():
     assert constants.DBMS_MIN_REVISION_WITH_SERVER_SETTINGS == 54474
     assert constants.DBMS_MIN_REVISION_WITH_QUERY_AND_LINE_NUMBERS == 54475
     assert constants.DBMS_MIN_REVISON_WITH_JWT_IN_INTERSERVER == 54476
+    assert constants.DBMS_QUERY_PLAN_SERIALIZATION_VERSION == 0
+    assert constants.DBMS_MIN_REVISION_WITH_QUERY_PLAN_SERIALIZATION == 54477
     assert constants.CLIENT_REVISION == constants.DBMS_MIN_REVISION_WITH_SYSTEM_KEYWORDS_TABLE
 
 
@@ -239,6 +243,7 @@ def test_upstream_packet_type_names_cover_protocol_54468_packets():
     )
     assert ClientPacket.to_str(ClientPacket.SSH_CHALLENGE_REQUEST) == "SSHChallengeRequest"
     assert ClientPacket.to_str(ClientPacket.SSH_CHALLENGE_RESPONSE) == "SSHChallengeResponse"
+    assert ClientPacket.to_str(ClientPacket.QUERY_PLAN) == "QueryPlan"
     assert ServerPacket.to_str(ServerPacket.SSH_CHALLENGE) == "SSHChallenge"
 
 
@@ -440,6 +445,30 @@ async def test_upstream_receive_hello_reads_server_settings_at_revision_54474():
     await conn.receive_hello()
 
     assert conn.server_info.used_revision == constants.DBMS_MIN_REVISION_WITH_SERVER_SETTINGS
+    await assert_reader_exhausted(conn.reader)
+
+
+@pytest.mark.asyncio
+async def test_upstream_receive_hello_reads_query_plan_version_at_revision_54477():
+    stream = asyncio.StreamReader()
+    stream.feed_data(
+        await _server_hello_packet(
+            server_revision=constants.DBMS_MIN_REVISION_WITH_QUERY_PLAN_SERIALIZATION,
+            used_revision=constants.DBMS_MIN_REVISION_WITH_QUERY_PLAN_SERIALIZATION,
+        )
+    )
+    stream.feed_eof()
+
+    conn = ProtoConnection()
+    conn.client_revision = constants.DBMS_MIN_REVISION_WITH_QUERY_PLAN_SERIALIZATION
+    conn.reader = BufferedReader(stream)
+
+    await conn.receive_hello()
+
+    assert (
+        conn.server_info.used_revision
+        == constants.DBMS_MIN_REVISION_WITH_QUERY_PLAN_SERIALIZATION
+    )
     await assert_reader_exhausted(conn.reader)
 
 

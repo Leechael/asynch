@@ -334,6 +334,9 @@ class Connection:
                     await self.reader.read_uint8()
                     await self.reader.read_str()
 
+            if used_revision >= constants.DBMS_MIN_REVISION_WITH_QUERY_PLAN_SERIALIZATION:
+                await self.reader.read_varint()
+
             self.server_info = ServerInfo(
                 server_name,
                 server_version_major,
