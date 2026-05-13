@@ -62,10 +62,12 @@ class TupleColumn(Column):
         )
 
     async def read_state_prefix(self):
+        await super().read_state_prefix()
         for column in self.nested_columns:
             await column.read_state_prefix()
 
     async def write_state_prefix(self):
+        await super().write_state_prefix()
         for column in self.nested_columns:
             await column.write_state_prefix()
 

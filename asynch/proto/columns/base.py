@@ -5,6 +5,58 @@ from ...errors import ColumnTypeMismatchException, StructPackException
 from ..streams.buffered import BufferedReader, BufferedWriter
 
 
+class CommonSerialization:
+    def __init__(self, column):
+        self.column = column
+
+    async def read_sparse(self, n_items):
+        return n_items
+
+    def apply_sparse(self, items):
+        return items
+
+
+class SparseSerialization(CommonSerialization):
+    def __init__(self, column):
+        self.sparse_indexes = []
+        self.items_total = None
+        super().__init__(column)
+
+    async def read_sparse(self, n_items):
+        sparse_indexes = []
+        items_total = 0
+        non_default_items = 0
+
+        end_of_granule_flag = 1 << 62
+        end_of_granule = False
+
+        while not end_of_granule:
+            group_size = await self.column.reader.read_varint()
+            end_of_granule = group_size & end_of_granule_flag
+            group_size &= ~end_of_granule_flag
+
+            items_total += group_size + 1
+            if not end_of_granule:
+                non_default_items += 1
+                sparse_indexes.append(items_total)
+
+        self.sparse_indexes = sparse_indexes
+        self.items_total = items_total
+
+        return non_default_items
+
+    def apply_sparse(self, items):
+        default = self.column.null_value
+        if self.column.after_read_items:
+            default = self.column.after_read_items([default])[0]
+
+        rv = [default] * (self.items_total - 1)
+        for item_number, i in enumerate(self.sparse_indexes):
+            rv[i - 1] = items[item_number]
+
+        return rv
+
+
 class Column:
     ch_type = None
     py_types = None
@@ -17,11 +69,20 @@ class Column:
 
     null_value = 0
 
-    def __init__(self, reader: BufferedReader, writer: BufferedWriter, types_check=False, **kwargs):
+    def __init__(
+        self,
+        reader: BufferedReader,
+        writer: BufferedWriter,
+        types_check=False,
+        has_custom_serialization=False,
+        **kwargs,
+    ):
         self.writer = writer
         self.reader = reader
         self.nullable = False
         self.types_check_enabled = types_check
+        self.has_custom_serialization = has_custom_serialization
+        self.serialization = CommonSerialization(self)
         self.input_null_as_default = False
         if "context" in kwargs:
             settings = kwargs["context"].client_settings
@@ -104,12 +165,15 @@ class Column:
         raise NotImplementedError
 
     async def read_data(self, n_items):
+        n_items = await self.serialization.read_sparse(n_items)
+
         if self.nullable:
             nulls_map = await self._read_nulls_map(n_items)
         else:
             nulls_map = None
 
-        return await self._read_data(n_items, nulls_map=nulls_map)
+        items = await self._read_data(n_items, nulls_map=nulls_map)
+        return self.serialization.apply_sparse(items)
 
     async def _read_data(self, n_items, nulls_map=None):
         items = await self.read_items(
@@ -126,7 +190,10 @@ class Column:
         raise NotImplementedError
 
     async def read_state_prefix(self):
-        pass
+        if self.has_custom_serialization:
+            use_custom_serialization = await self.reader.read_varint()
+            if use_custom_serialization:
+                self.serialization = SparseSerialization(self)
 
     async def write_state_prefix(self):
         pass

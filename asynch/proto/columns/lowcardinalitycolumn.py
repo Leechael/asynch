@@ -36,11 +36,13 @@ class LowCardinalityColumn(Column):
     async def read_state_prefix(
         self,
     ):
+        await super().read_state_prefix()
         return await self.reader.read_uint64()
 
     async def write_state_prefix(
         self,
     ):
+        await super().write_state_prefix()
         # KeysSerializationVersion. See ClickHouse docs.
         return await self.writer.write_int64(1)
 

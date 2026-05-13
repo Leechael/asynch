@@ -165,11 +165,13 @@ class ArrayColumn(Column):
     async def read_state_prefix(
         self,
     ):
+        await super().read_state_prefix()
         return await self.nested_column.read_state_prefix()
 
     async def write_state_prefix(
         self,
     ):
+        await super().write_state_prefix()
         await self.nested_column.write_state_prefix()
 
     async def _read(

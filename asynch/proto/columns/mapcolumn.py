@@ -19,10 +19,12 @@ class MapColumn(Column):
         super().__init__(**kwargs)
 
     async def read_state_prefix(self):
+        await super().read_state_prefix()
         await self.key_column.read_state_prefix()
         await self.value_column.read_state_prefix()
 
     async def write_state_prefix(self):
+        await super().write_state_prefix()
         await self.key_column.write_state_prefix()
         await self.value_column.write_state_prefix()
 
