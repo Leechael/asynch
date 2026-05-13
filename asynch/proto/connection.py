@@ -589,7 +589,7 @@ class Connection:
 
         if revision >= constants.DBMS_MIN_PROTOCOL_VERSION_WITH_PARAMETERS:
             if self.context.client_settings["server_side_params"]:
-                escaped = escape_params(params or {}, for_server=True)
+                escaped = escape_params(params or {}, self.context, for_server=True)
             else:
                 escaped = {}
             await write_settings(self.writer, escaped, True, SettingsFlags.CUSTOM)
@@ -783,7 +783,7 @@ class Connection:
         columnar: bool = False,
     ):
         if params is not None and not self.context.client_settings["server_side_params"]:
-            query = self.substitute_params(query, params)
+            query = self.substitute_params(query, params, self.context)
 
         await self.send_query(query, query_id=query_id, params=params)
         await self.send_external_tables(external_tables, types_check=types_check)
@@ -835,7 +835,7 @@ class Connection:
         columnar: bool = False,
     ):
         if params is not None and not self.context.client_settings["server_side_params"]:
-            query = self.substitute_params(query, params)
+            query = self.substitute_params(query, params, self.context)
 
         await self.send_query(query, query_id=query_id, params=params)
         await self.send_external_tables(external_tables, types_check=types_check)
@@ -864,7 +864,7 @@ class Connection:
         await self.block_writer.write(block)
 
     @staticmethod
-    def substitute_params(query: str, params: Mapping[str, Any]) -> str:
+    def substitute_params(query: str, params: Mapping[str, Any], context=None) -> str:
         if not isinstance(params, Mapping):
             raise ValueError("Parameters are expected to be a mapping")
 
@@ -874,7 +874,7 @@ class Connection:
         ).lower()
         style = _SUBSTITUTE_PARAMS_STYLE_ALIASES.get(style, style)
 
-        escaped = escape_params(params)
+        escaped = escape_params(params, context)
         if style == SUBSTITUTE_PARAMS_STYLE_FORMAT:
             return query.format(**escaped)
         if style == SUBSTITUTE_PARAMS_STYLE_PYFORMAT:
@@ -1004,7 +1004,7 @@ class Connection:
         types_check: bool = False,
     ):
         if params is not None and not self.context.client_settings["server_side_params"]:
-            query = self.substitute_params(query, params)
+            query = self.substitute_params(query, params, self.context)
 
         await self.send_query(query, query_id=query_id, params=params)
         await self.send_external_tables(external_tables, types_check=types_check)

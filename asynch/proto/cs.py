@@ -34,6 +34,9 @@ class ServerInfo:
     def version_tuple(self):
         return self.version_major, self.version_minor, self.version_patch
 
+    def get_timezone(self):
+        return self.session_timezone or self.timezone
+
 
 class Interface:
     TCP = 1
