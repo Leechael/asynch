@@ -7,12 +7,13 @@ from pytz import timezone as get_timezone
 from pytz import utc
 from tzlocal import get_localzone
 
+from ..utils import compat
 from .base import FormatColumn
 
 
 class DateTimeColumn(FormatColumn):
     ch_type = "DateTime"
-    py_types = (datetime, int)
+    py_types = (datetime, int) + compat.string_types
     format = "I"
 
     def __init__(self, timezone=None, offset_naive=True, **kwargs):
@@ -147,6 +148,8 @@ class DateTime64Column(DateTimeColumn):
                 # support supplying raw integers to avoid
                 # costly timezone conversions when using datetime
                 continue
+            elif isinstance(item, str):
+                item = ciso8601.parse_datetime(item)
 
             if timezone:
                 # Set server's timezone for offset-naive datetime.

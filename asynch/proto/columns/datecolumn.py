@@ -2,6 +2,7 @@ from datetime import date, timedelta
 
 import ciso8601
 
+from ..utils import compat
 from .base import FormatColumn
 
 epoch_start = date(1970, 1, 1)
@@ -26,7 +27,7 @@ lazy_date_lut_reverse = LazyLUT(_factory=lambda x: (x - epoch_start).days)
 
 class DateColumn(FormatColumn):
     ch_type = "Date"
-    py_types = (date,)
+    py_types = (date,) + compat.string_types
     format = "H"
 
     min_value = epoch_start
