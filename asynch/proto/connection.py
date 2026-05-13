@@ -182,6 +182,7 @@ class Connection:
             "input_format_null_as_default": self.settings.pop(
                 "input_format_null_as_default", False
             ),
+            "server_side_params": self.settings.pop("server_side_params", False),
         }
         self.last_query: Optional[QueryInfo] = None
         self.available_client_settings = (
@@ -193,6 +194,7 @@ class Connection:
             "opentelemetry_tracestate",
             "quota_key",
             "input_format_null_as_default",
+            "server_side_params",
         )
         self.context.settings = self.settings
         self.context.client_settings = self.client_settings
@@ -525,7 +527,12 @@ class Connection:
         await self.writer.write_varint(ClientPacket.CANCEL)
         await self.writer.flush()
 
-    async def send_query(self, query: str, query_id: str = ""):
+    async def send_query(
+        self,
+        query: str,
+        query_id: str = "",
+        params: Optional[Mapping[str, Any]] = None,
+    ):
         await self.writer.write_varint(ClientPacket.QUERY)
         await self.writer.write_str(query_id)
         revision = self.server_info.revision
@@ -733,10 +740,10 @@ class Connection:
         types_check: bool = False,
         columnar: bool = False,
     ):
-        if params is not None:
+        if params is not None and not self.context.client_settings["server_side_params"]:
             query = self.substitute_params(query, params)
 
-        await self.send_query(query, query_id=query_id)
+        await self.send_query(query, query_id=query_id, params=params)
         await self.send_external_tables(external_tables, types_check=types_check)
         return self.receive_result(
             with_column_types=with_column_types, progress=True, columnar=columnar
@@ -785,10 +792,10 @@ class Connection:
         types_check: bool = False,
         columnar: bool = False,
     ):
-        if params is not None:
+        if params is not None and not self.context.client_settings["server_side_params"]:
             query = self.substitute_params(query, params)
 
-        await self.send_query(query, query_id=query_id)
+        await self.send_query(query, query_id=query_id, params=params)
         await self.send_external_tables(external_tables, types_check=types_check)
         return await self.receive_result(with_column_types=with_column_types, columnar=columnar)
 
@@ -903,10 +910,10 @@ class Connection:
         query_id: Optional[str] = None,
         types_check: bool = False,
     ):
-        if params is not None:
+        if params is not None and not self.context.client_settings["server_side_params"]:
             query = self.substitute_params(query, params)
 
-        await self.send_query(query, query_id=query_id)
+        await self.send_query(query, query_id=query_id, params=params)
         await self.send_external_tables(external_tables, types_check=types_check)
         return self.iter_receive_result(with_column_types=with_column_types)
 
