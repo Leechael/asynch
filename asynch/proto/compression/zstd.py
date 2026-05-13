@@ -19,4 +19,4 @@ class Decompressor(BaseDecompressor):
     decompress_func = zstd.decompress
 
     def decompress_data(self, data, uncompressed_size):
-        return zstd.decompress(data)
+        return zstd.decompress(bytes(data))
