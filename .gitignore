@@ -167,5 +167,8 @@ cython_debug/
 # ruff stuff
 .ruff_cache
 
+# Local execution plans.
+plan.md
+
 # Local upstream reference checkouts.
 repos/
