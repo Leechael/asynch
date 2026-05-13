@@ -27,6 +27,7 @@ class ServerInfo:
         self.version_patch = version_patch
         self.revision = revision
         self.timezone = timezone
+        self.session_timezone = None
         self.display_name = display_name
         self.used_revision = used_revision
 

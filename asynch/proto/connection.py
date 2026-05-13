@@ -500,6 +500,11 @@ class Connection:
 
         elif packet_type == ServerPacket.PROFILE_EVENTS:
             packet.block = await self.receive_data(raw=True)
+        elif packet_type == ServerPacket.TIMEZONE_UPDATE:
+            timezone = await self.reader.read_str()
+            if timezone:
+                logger.info("Server timezone changed to %s", timezone)
+                self.server_info.session_timezone = timezone
         else:
             await self.disconnect()
             raise UnknownPacketFromServerError(
@@ -973,6 +978,9 @@ class Connection:
             if packet.type == ServerPacket.PROGRESS:
                 if self.last_query is not None:
                     self.last_query.store_progress(packet.progress)
+                continue
+
+            if packet.type == ServerPacket.TIMEZONE_UPDATE:
                 continue
 
             if packet.type == ServerPacket.LOG:

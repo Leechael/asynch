@@ -79,6 +79,14 @@ class ServerPacket:
     # Packet with profile events from server.
     PROFILE_EVENTS = 14
 
+    MERGE_TREE_ALL_RANGES_ANNOUNCEMENT = 15
+
+    # Request from a MergeTree replica to a coordinator
+    MERGE_TREE_READ_TASK_REQUEST = 16
+
+    # Receive server's (session-wide) default timezone
+    TIMEZONE_UPDATE = 17
+
     _types_str = [
         "Hello",
         "Data",
@@ -95,6 +103,9 @@ class ServerPacket:
         "PartUUIDs",
         "ReadTaskRequest",
         "ProfileEvents",
+        "MergeTreeAllRangesAnnouncement",
+        "MergeTreeReadTaskRequest",
+        "TimezoneUpdate",
     ]
 
     @classmethod
@@ -102,7 +113,7 @@ class ServerPacket:
         if packet is None:
             return "Connection closed by remote"
 
-        return "Unknown packet" if packet > 14 else cls._types_str[packet]
+        return "Unknown packet" if packet > 17 else cls._types_str[packet]
 
     @classmethod
     def strings_in_message(cls, packet):

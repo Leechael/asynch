@@ -281,6 +281,25 @@ async def test_upstream_block_writer_emits_custom_serialization_marker():
     assert buffer[position] == 0
 
 
+@pytest.mark.asyncio
+async def test_upstream_receive_timezone_update_packet():
+    writer = BufferedWriter()
+    await writer.write_varint(ServerPacket.TIMEZONE_UPDATE)
+    await writer.write_str("Asia/Taipei")
+    stream = asyncio.StreamReader()
+    stream.feed_data(bytes(writer.buffer))
+    stream.feed_eof()
+
+    conn = ProtoConnection()
+    conn.reader = BufferedReader(stream)
+    conn.server_info = SimpleNamespace(session_timezone=None)
+
+    packet = await conn._receive_packet()
+
+    assert packet.type == ServerPacket.TIMEZONE_UPDATE
+    assert conn.server_info.session_timezone == "Asia/Taipei"
+
+
 def test_upstream_server_side_params_use_double_escaping():
     assert escape_params({"value": "\t"}, for_server=True) == {"value": "'\\\\t'"}
     assert escape_params({"value": "\\"}, for_server=True) == {"value": "'\\\\\\\\'"}
