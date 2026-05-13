@@ -92,6 +92,18 @@ async def test_dict_cursor(conn: Connection):
 
 
 @pytest.mark.asyncio
+async def test_server_side_params(conn: Connection):
+    async with conn.cursor() as cursor:
+        cursor.set_settings({"server_side_params": True})
+        await cursor.execute(
+            "SELECT {value:Int32}, {text:String}, length({text:String})",
+            args={"value": 2, "text": "\t"},
+        )
+        ret = await cursor.fetchall()
+        assert ret == [(2, "\t", 1)]
+
+
+@pytest.mark.asyncio
 async def test_insert_dict(conn: Connection):
     async with conn.cursor(cursor=DictCursor) as cursor:
         rows = await cursor.execute(
