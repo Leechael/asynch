@@ -533,6 +533,11 @@ class Connection:
         query_id: str = "",
         params: Optional[Mapping[str, Any]] = None,
     ):
+        # Defensive: reset reader buffer to discard any stale bytes left by
+        # a previous INSERT that were already consumed by receive_packet but
+        # not yet cleared from the BufferedReader internal state.
+        if self.reader is not None:
+            self.reader._reset_buffer()
         await self.writer.write_varint(ClientPacket.QUERY)
         await self.writer.write_str(query_id)
         revision = self.server_info.revision
