@@ -1,5 +1,6 @@
 from typing import TYPE_CHECKING, Optional
 
+from asynch.errors import PartiallyConsumedQueryError
 from asynch.proto.result import QueryInfo
 
 if TYPE_CHECKING:
@@ -49,6 +50,8 @@ class ExecuteContext:
         try:
             await self._connection.force_connect()
             self._connection.last_query = QueryInfo(self._connection.reader)
+        except PartiallyConsumedQueryError:
+            raise
         except (Exception, KeyboardInterrupt):
             await self._connection.disconnect()
             raise
