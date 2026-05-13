@@ -136,7 +136,7 @@ class IterQueryResult:
     def __aiter__(self):
         return self
 
-    async def _get_next_(self):
+    async def _get_next_(self, include_column_types=True):
         packet = await self.packet_generator.__anext__()
         block = getattr(packet, "block", None)
         if block is None:
@@ -145,9 +145,10 @@ class IterQueryResult:
         if self.first_block and self.with_column_types:
             self.first_block = False
             self._columns_with_types = block.columns_with_types
-            rv = []
-            rv.extend(block.get_rows())
-            return rv
+            rows = list(block.get_rows())
+            if include_column_types:
+                return [self._columns_with_types] + rows
+            return rows
         else:
             return block.get_rows()
 
@@ -173,7 +174,7 @@ class IterQueryResult:
             return self._columns_with_types
 
         if self.first_block and self.with_column_types:
-            self.data += await self._get_next_()
+            self.data += await self._get_next_(include_column_types=False)
             return self._columns_with_types
         else:
             return []

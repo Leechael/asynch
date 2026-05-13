@@ -517,19 +517,53 @@ class Connection:
 
         return packet
 
-    async def packet_generator(self) -> AsyncGenerator:
-        while True:
-            packet = await self.receive_packet()
-            if not packet:
-                break
+    async def packet_generator(self, progress=False) -> AsyncGenerator:
+        try:
+            while True:
+                packet = (
+                    await self._receive_progress_packet()
+                    if progress
+                    else await self.receive_packet()
+                )
+                if not packet:
+                    break
 
-            if packet is True:
-                continue
+                if packet is True:
+                    continue
 
-            yield packet
+                yield packet
+        except (Exception, KeyboardInterrupt):
+            await self.disconnect()
+            raise
+
+    async def _receive_progress_packet(self):
+        packet = await self._receive_packet()
+
+        if packet.type == ServerPacket.EXCEPTION:
+            raise packet.exception
+
+        if packet.type == ServerPacket.PROGRESS:
+            self.last_query.store_progress(packet.progress)
+            return packet
+
+        if packet.type == ServerPacket.END_OF_STREAM:
+            return False
+
+        if packet.type == ServerPacket.PROFILE_INFO:
+            self.last_query.store_profile(packet.profile_info)
+            return packet
+
+        if packet.type == ServerPacket.PROFILE_EVENTS:
+            self.last_query.store_profile(packet.block)
+            return True
+
+        if packet.type == ServerPacket.LOG:
+            return True
+
+        return packet
 
     async def receive_result(self, with_column_types=False, progress=False, columnar=False):
-        generator = self.packet_generator()
+        generator = self.packet_generator(progress=progress)
 
         if progress:
             return ProgressQueryResult(
@@ -932,7 +966,7 @@ class Connection:
             elif packet.type == ServerPacket.EXCEPTION:
                 raise packet.exception
             elif packet.type == ServerPacket.LOG:
-                self.log_block(packet.block)
+                pass
             elif packet.type == ServerPacket.TABLE_COLUMNS:
                 pass
 
