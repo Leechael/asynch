@@ -151,8 +151,14 @@ async def read_column(
     context,
     column_spec,
     n_items,
+    has_custom_serialization=False,
 ):
-    column_options = {"context": context, "reader": reader, "writer": writer}
+    column_options = {
+        "context": context,
+        "reader": reader,
+        "writer": writer,
+        "has_custom_serialization": has_custom_serialization,
+    }
     column = get_column_by_spec(column_spec, column_options)
     await column.read_state_prefix()
     return await column.read_data(

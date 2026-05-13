@@ -7,10 +7,12 @@ import pytest
 
 from asynch.errors import UnexpectedPacketFromServerError
 from asynch.proto import constants
-from asynch.proto.block import RowOrientedBlock
+from asynch.proto.block import ColumnOrientedBlock, RowOrientedBlock
 from asynch.proto.connection import SUBSTITUTE_PARAMS_STYLE_ENV
 from asynch.proto.connection import Connection as ProtoConnection
+from asynch.proto.context import Context
 from asynch.proto.protocol import ServerPacket
+from asynch.proto.streams.block import BlockWriter
 from asynch.proto.streams.buffered import BufferedReader, BufferedWriter
 from asynch.proto.utils.escape import escape_params
 
@@ -84,6 +86,19 @@ def _skip_query_packet_to_parameters(buffer: bytes) -> tuple[dict[str, tuple[int
     _, position = _read_str(buffer, position)  # query
 
     return _read_settings_as_strings(buffer, position)
+
+
+def _skip_block_info(buffer: bytes, position: int) -> int:
+    while True:
+        field_num, position = _read_varint(buffer, position)
+        if not field_num:
+            return position
+        if field_num == 1:
+            position += 1
+        elif field_num == 2:
+            position += 4
+        else:
+            raise AssertionError(f"Unexpected block info field {field_num}")
 
 
 async def _server_hello_packet(*, server_revision: int) -> bytes:
@@ -240,6 +255,30 @@ async def test_upstream_send_query_omits_parameters_before_revision_54459(monkey
     _, position = _read_str(buffer, position)  # query
 
     assert position == len(buffer)
+
+
+@pytest.mark.asyncio
+async def test_upstream_block_writer_emits_custom_serialization_marker():
+    context = Context()
+    context.server_info = SimpleNamespace(used_revision=54468)
+    context.client_settings = {"input_format_null_as_default": False}
+    writer = BufferedWriter()
+    block_writer = BlockWriter(None, writer, context)
+    block = ColumnOrientedBlock(
+        columns_with_types=[("value", "UInt8")],
+        data=[(1,)],
+    )
+
+    await block_writer.write(block)
+
+    buffer = bytes(writer.buffer)
+    position = _skip_block_info(buffer, 0)
+    _, position = _read_varint(buffer, position)  # n_columns
+    _, position = _read_varint(buffer, position)  # n_rows
+    _, position = _read_str(buffer, position)  # column name
+    _, position = _read_str(buffer, position)  # column type
+
+    assert buffer[position] == 0
 
 
 def test_upstream_server_side_params_use_double_escaping():
