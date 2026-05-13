@@ -2,6 +2,7 @@ import ssl
 from typing import Any
 from urllib.parse import ParseResult, parse_qs, unquote, urlparse
 
+from asynch.proto import constants
 from asynch.proto.models.enums import ClickhouseScheme, CompressionAlgorithm
 from asynch.proto.utils.compat import asbool
 
@@ -85,6 +86,10 @@ def parse_dsn(dsn: str) -> dict[str, Any]:
             kwargs[name] = asbool(value)
         elif name == "client_name":
             kwargs[name] = value
+        elif name == "settings_is_important":
+            kwargs[name] = asbool(value)
+        elif name == "client_revision":
+            kwargs[name] = int(value)
         elif name in _TIMEOUTS:
             kwargs[name] = float(value)
         elif name == "compress_block_size":
@@ -100,6 +105,9 @@ def parse_dsn(dsn: str) -> dict[str, Any]:
             kwargs["alt_hosts"] = value
         else:
             settings[name] = value
+
+    if kwargs.get("secure") and "port" not in kwargs:
+        kwargs["port"] = constants.DEFAULT_SECURE_PORT
 
     if settings:
         kwargs["settings"] = settings
