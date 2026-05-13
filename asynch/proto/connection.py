@@ -556,7 +556,6 @@ class Connection:
             return packet
 
         if packet.type == ServerPacket.PROFILE_EVENTS:
-            self.last_query.store_profile(packet.block)
             return True
 
         if packet.type == ServerPacket.LOG:
@@ -1012,8 +1011,6 @@ class Connection:
             packet = await self._receive_packet()
 
             if packet.type == ServerPacket.PROFILE_EVENTS:
-                if self.last_query is not None:
-                    self.last_query.store_profile(packet.block)
                 break
 
             if packet.type == ServerPacket.PROGRESS:
