@@ -123,6 +123,7 @@ class BufferedReader:
     def _reset_buffer(self):
         self.position = 0
         self.buffer = bytearray()
+        self.current_buffer_size = 0
 
     async def _read_into_buffer(self):
         packet = await self.reader.read(self.buffer_max_size)
