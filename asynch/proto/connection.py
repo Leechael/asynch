@@ -821,7 +821,7 @@ class Connection:
 
         style = os.environ.get(
             SUBSTITUTE_PARAMS_STYLE_ENV,
-            SUBSTITUTE_PARAMS_STYLE_FORMAT,
+            SUBSTITUTE_PARAMS_STYLE_PYFORMAT,
         ).lower()
         style = _SUBSTITUTE_PARAMS_STYLE_ALIASES.get(style, style)
 

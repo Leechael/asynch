@@ -97,7 +97,9 @@ async def test_execute(proto_conn: ProtoConnection):
 
 
 @pytest.mark.asyncio
-async def test_execute_with_args(proto_conn: ProtoConnection):
+async def test_execute_with_args(proto_conn: ProtoConnection, monkeypatch):
+    monkeypatch.setenv(SUBSTITUTE_PARAMS_STYLE_ENV, "format")
+
     query = "SELECT {val}"
     ret = await proto_conn.execute(query, args={"val": 2})
     assert ret == [(2,)]
@@ -119,8 +121,8 @@ async def test_execute_with_missing_arg(proto_conn: ProtoConnection):
         await proto_conn.execute(query, args={"foo": 1})
 
 
-def test_substitute_params_uses_format_style_by_default(monkeypatch):
-    monkeypatch.delenv(SUBSTITUTE_PARAMS_STYLE_ENV, raising=False)
+def test_substitute_params_supports_format_style(monkeypatch):
+    monkeypatch.setenv(SUBSTITUTE_PARAMS_STYLE_ENV, "format")
 
     query = "SELECT {value}, {name}"
     params = {"value": 1, "name": "hello"}
@@ -129,7 +131,7 @@ def test_substitute_params_uses_format_style_by_default(monkeypatch):
 
 
 def test_substitute_params_supports_pyformat_style(monkeypatch):
-    monkeypatch.setenv(SUBSTITUTE_PARAMS_STYLE_ENV, "pyformat")
+    monkeypatch.delenv(SUBSTITUTE_PARAMS_STYLE_ENV, raising=False)
 
     query = "SELECT %(value)s, %(name)s"
     params = {"value": 1, "name": "hello"}
