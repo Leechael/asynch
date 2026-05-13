@@ -2,6 +2,7 @@ import asyncio
 import ssl
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from uuid import UUID
 
 import leb128
 import pytest
@@ -13,7 +14,7 @@ from asynch.proto.columns.datetimecolumn import create_datetime_column
 from asynch.proto.connection import SUBSTITUTE_PARAMS_STYLE_ENV
 from asynch.proto.connection import Connection as ProtoConnection
 from asynch.proto.context import Context
-from asynch.proto.protocol import ServerPacket
+from asynch.proto.protocol import ClientPacket, ServerPacket
 from asynch.proto.streams.block import BlockWriter
 from asynch.proto.streams.buffered import BufferedReader, BufferedWriter
 from asynch.proto.utils.dsn import parse_dsn
@@ -144,7 +145,13 @@ def test_upstream_substitute_params_uses_pyformat_by_default(monkeypatch):
 
 
 def test_upstream_protocol_revision_matches_clickhouse_driver_0_2_10():
+    assert constants.DBMS_MIN_REVISION_WITH_TABLES_STATUS == 54226
+    assert constants.DBMS_MIN_REVISION_WITH_TIME_ZONE_PARAMETER_IN_DATETIME_DATA_TYPE == 54337
+    assert constants.DBMS_MIN_REVISION_WITH_LOW_CARDINALITY_TYPE == 54405
+    assert constants.DBMS_MIN_REVISION_WITH_X_FORWARDED_FOR_IN_CLIENT_INFO == 54443
+    assert constants.DBMS_MIN_REVISION_WITH_REFERER_IN_CLIENT_INFO == 54447
     assert constants.DBMS_MIN_REVISION_WITH_CUSTOM_SERIALIZATION == 54454
+    assert constants.DBMS_MIN_PROTOCOL_VERSION_WITH_VIEW_IF_PERMITTED == 54457
     assert constants.DBMS_MIN_PROTOCOL_VERSION_WITH_ADDENDUM == 54458
     assert constants.DBMS_MIN_PROTOCOL_VERSION_WITH_QUOTA_KEY == 54458
     assert constants.DBMS_MIN_PROTOCOL_VERSION_WITH_PARAMETERS == 54459
@@ -153,8 +160,25 @@ def test_upstream_protocol_revision_matches_clickhouse_driver_0_2_10():
     assert constants.DBMS_MIN_REVISION_WITH_INTERSERVER_SECRET_V2 == 54462
     assert constants.DBMS_MIN_PROTOCOL_VERSION_WITH_TOTAL_BYTES_IN_PROGRESS == 54463
     assert constants.DBMS_MIN_PROTOCOL_VERSION_WITH_TIMEZONE_UPDATES == 54464
+    assert constants.DBMS_MIN_REVISION_WITH_SPARSE_SERIALIZATION == 54465
+    assert constants.DBMS_MIN_REVISION_WITH_SSH_AUTHENTICATION == 54466
+    assert constants.DBMS_MIN_REVISION_WITH_TABLE_READ_ONLY_CHECK == 54467
     assert constants.DBMS_MIN_REVISION_WITH_SYSTEM_KEYWORDS_TABLE == 54468
     assert constants.CLIENT_REVISION == constants.DBMS_MIN_REVISION_WITH_SYSTEM_KEYWORDS_TABLE
+
+
+def test_upstream_packet_type_names_cover_protocol_54468_packets():
+    assert ClientPacket.to_str(ClientPacket.KEEP_ALIVE) == "KeepAlive"
+    assert ClientPacket.to_str(ClientPacket.SCALAR) == "Scalar"
+    assert ClientPacket.to_str(ClientPacket.IGNORED_PART_UUIDS) == "IgnoredPartUUIDs"
+    assert ClientPacket.to_str(ClientPacket.READ_TASK_RESPONSE) == "ReadTaskResponse"
+    assert (
+        ClientPacket.to_str(ClientPacket.MERGE_TREE_READ_TASK_RESPONSE)
+        == "MergeTreeReadTaskResponse"
+    )
+    assert ClientPacket.to_str(ClientPacket.SSH_CHALLENGE_REQUEST) == "SSHChallengeRequest"
+    assert ClientPacket.to_str(ClientPacket.SSH_CHALLENGE_RESPONSE) == "SSHChallengeResponse"
+    assert ServerPacket.to_str(ServerPacket.SSH_CHALLENGE) == "SSHChallenge"
 
 
 def test_upstream_client_revision_is_capped_to_supported_revision():
@@ -386,6 +410,74 @@ async def test_upstream_receive_timezone_update_packet():
 
     assert packet.type == ServerPacket.TIMEZONE_UPDATE
     assert conn.server_info.session_timezone == "Asia/Taipei"
+
+
+@pytest.mark.asyncio
+async def test_upstream_part_uuids_packet_reads_uuid_vector():
+    uuids = [
+        UUID("c0fcbba9-0752-44ed-a5d6-4dfb4342b89d"),
+        UUID("2efcead4-ff55-4db5-bdb4-6b36a308d8e0"),
+    ]
+    writer = BufferedWriter()
+    await writer.write_varint(ServerPacket.PART_UUIDS)
+    await writer.write_varint(len(uuids))
+    for uuid in uuids:
+        await writer.write_uint128(uuid.int)
+
+    stream = asyncio.StreamReader()
+    stream.feed_data(bytes(writer.buffer))
+    stream.feed_eof()
+
+    conn = ProtoConnection()
+    conn.reader = BufferedReader(stream)
+
+    packet = await conn._receive_packet()
+
+    assert packet.type == ServerPacket.PART_UUIDS
+    assert packet.part_uuids == uuids
+    assert packet.block is None
+
+
+@pytest.mark.asyncio
+async def test_upstream_read_task_request_packet_has_no_block_payload():
+    writer = BufferedWriter()
+    await writer.write_varint(ServerPacket.READ_TASK_REQUEST)
+
+    stream = asyncio.StreamReader()
+    stream.feed_data(bytes(writer.buffer))
+    stream.feed_eof()
+
+    conn = ProtoConnection()
+    conn.reader = BufferedReader(stream)
+
+    packet = await conn._receive_packet()
+
+    assert packet.type == ServerPacket.READ_TASK_REQUEST
+    assert packet.read_task_request is True
+    assert packet.block is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "packet_type",
+    [
+        ServerPacket.MERGE_TREE_ALL_RANGES_ANNOUNCEMENT,
+        ServerPacket.MERGE_TREE_READ_TASK_REQUEST,
+    ],
+)
+async def test_upstream_parallel_read_packets_fail_before_payload_is_misread(packet_type):
+    writer = BufferedWriter()
+    await writer.write_varint(packet_type)
+
+    stream = asyncio.StreamReader()
+    stream.feed_data(bytes(writer.buffer))
+    stream.feed_eof()
+
+    conn = ProtoConnection()
+    conn.reader = BufferedReader(stream)
+
+    with pytest.raises(UnexpectedPacketFromServerError, match="Unsupported packet"):
+        await conn._receive_packet()
 
 
 def test_upstream_datetime_column_uses_session_timezone(monkeypatch):

@@ -10,6 +10,7 @@ from time import time
 from types import GeneratorType
 from typing import Any, Iterable, Mapping, Optional, Union
 from urllib.parse import urlparse
+from uuid import UUID
 
 from asynch.errors import (
     NetworkError,
@@ -74,6 +75,8 @@ class Packet:
         self.progress = None
         self.profile_info = None
         self.multistring_message = None
+        self.part_uuids = None
+        self.read_task_request = False
 
 
 class Connection:
@@ -469,6 +472,10 @@ class Connection:
         num = ServerPacket.strings_in_message(packet_type)
         return [await self.reader.read_str() for _i in range(num)]
 
+    async def receive_part_uuids(self):
+        num = await self.reader.read_varint()
+        return [UUID(int=await self.reader.read_uint128()) for _ in range(num)]
+
     def log_block(self, block: BaseBlock):
         column_names = [x[0] for x in block.columns_with_types]
 
@@ -555,10 +562,19 @@ class Connection:
         elif packet_type == ServerPacket.TABLE_COLUMNS:
             packet.multistring_message = await self.receive_multistring_message(packet_type)
         elif packet_type == ServerPacket.PART_UUIDS:
-            packet.block = await self.receive_data()
+            packet.part_uuids = await self.receive_part_uuids()
 
         elif packet_type == ServerPacket.READ_TASK_REQUEST:
-            packet.block = await self.receive_data()
+            packet.read_task_request = True
+
+        elif packet_type in (
+            ServerPacket.MERGE_TREE_ALL_RANGES_ANNOUNCEMENT,
+            ServerPacket.MERGE_TREE_READ_TASK_REQUEST,
+        ):
+            await self.disconnect()
+            raise UnexpectedPacketFromServerError(
+                f"Unsupported packet {ServerPacket.to_str(packet_type)} from server {self.get_server()}"
+            )
 
         elif packet_type == ServerPacket.PROFILE_EVENTS:
             packet.block = await self.receive_data(raw=True)

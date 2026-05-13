@@ -26,11 +26,11 @@ async def _execute(conn, query, args=None):
 
 async def test_packets_to_str():
     assert ClientPacket.to_str(2) == "Data"
-    assert ClientPacket.to_str(6) == "Unknown packet"
+    assert ClientPacket.to_str(6) == "KeepAlive"
     assert ClientPacket.to_str(42) == "Unknown packet"
 
     assert ServerPacket.to_str(4) == "Pong"
-    assert ServerPacket.to_str(18) == "Unknown packet"
+    assert ServerPacket.to_str(18) == "SSHChallenge"
     assert ServerPacket.to_str(42) == "Unknown packet"
 
 

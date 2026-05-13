@@ -23,11 +23,46 @@ class ClientPacket:
     # Check status of tables on the server.
     TABLES_STATUS_REQUEST = 5
 
-    _types_str = ["Hello", "Query", "Data", "Cancel", "Ping", "TablesStatusRequest"]
+    # Keep the connection alive.
+    KEEP_ALIVE = 6
+
+    # A block of data (compressed or not).
+    SCALAR = 7
+
+    # List of unique parts ids to exclude from query processing.
+    IGNORED_PART_UUIDS = 8
+
+    # A filename to read from s3 (used in s3Cluster).
+    READ_TASK_RESPONSE = 9
+
+    # Coordinator's decision with a modified set of mark ranges allowed to read.
+    MERGE_TREE_READ_TASK_RESPONSE = 10
+
+    # Request SSH signature challenge.
+    SSH_CHALLENGE_REQUEST = 11
+
+    # Reply to SSH signature challenge.
+    SSH_CHALLENGE_RESPONSE = 12
+
+    _types_str = [
+        "Hello",
+        "Query",
+        "Data",
+        "Cancel",
+        "Ping",
+        "TablesStatusRequest",
+        "KeepAlive",
+        "Scalar",
+        "IgnoredPartUUIDs",
+        "ReadTaskResponse",
+        "MergeTreeReadTaskResponse",
+        "SSHChallengeRequest",
+        "SSHChallengeResponse",
+    ]
 
     @classmethod
     def to_str(cls, packet):
-        return "Unknown packet" if packet > 5 else cls._types_str[packet]
+        return "Unknown packet" if packet > 12 else cls._types_str[packet]
 
 
 class ServerPacket:
@@ -87,6 +122,9 @@ class ServerPacket:
     # Receive server's (session-wide) default timezone
     TIMEZONE_UPDATE = 17
 
+    # Return challenge for SSH signature signing
+    SSH_CHALLENGE = 18
+
     _types_str = [
         "Hello",
         "Data",
@@ -106,6 +144,7 @@ class ServerPacket:
         "MergeTreeAllRangesAnnouncement",
         "MergeTreeReadTaskRequest",
         "TimezoneUpdate",
+        "SSHChallenge",
     ]
 
     @classmethod
@@ -113,7 +152,7 @@ class ServerPacket:
         if packet is None:
             return "Connection closed by remote"
 
-        return "Unknown packet" if packet > 17 else cls._types_str[packet]
+        return "Unknown packet" if packet > 18 else cls._types_str[packet]
 
     @classmethod
     def strings_in_message(cls, packet):
