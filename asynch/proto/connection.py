@@ -473,6 +473,10 @@ class Connection:
             self.log_block(block)
         elif packet_type == ServerPacket.END_OF_STREAM:
             self.is_query_executing = False
+            # Clear reader buffer so trailing bytes from this query do not
+            # leak into the next query on the same connection.
+            if self.reader is not None:
+                self.reader._reset_buffer()
         elif packet_type == ServerPacket.TABLE_COLUMNS:
             packet.multistring_message = await self.receive_multistring_message(packet_type)
         elif packet_type == ServerPacket.PART_UUIDS:
@@ -533,11 +537,6 @@ class Connection:
         query_id: str = "",
         params: Optional[Mapping[str, Any]] = None,
     ):
-        # Defensive: reset reader buffer to discard any stale bytes left by
-        # a previous INSERT that were already consumed by receive_packet but
-        # not yet cleared from the BufferedReader internal state.
-        if self.reader is not None:
-            self.reader._reset_buffer()
         await self.writer.write_varint(ClientPacket.QUERY)
         await self.writer.write_str(query_id)
         revision = self.server_info.revision
