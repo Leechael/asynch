@@ -234,6 +234,7 @@ def test_upstream_protocol_revision_matches_clickhouse_driver_0_2_10():
     assert constants.DBMS_MIN_REVISON_WITH_PARALLEL_BLOCK_MARSHALLING == 54478
     assert constants.DBMS_CLUSTER_PROCESSING_PROTOCOL_VERSION == 6
     assert constants.DBMS_MIN_REVISION_WITH_VERSIONED_CLUSTER_FUNCTION_PROTOCOL == 54479
+    assert constants.DBMS_MIN_REVISION_WITH_OUT_OF_ORDER_BUCKETS_IN_AGGREGATION == 54480
     assert constants.CLIENT_REVISION == constants.DBMS_MIN_REVISION_WITH_SYSTEM_KEYWORDS_TABLE
 
 
@@ -720,6 +721,67 @@ async def test_upstream_block_info_reads_bucket_num_as_signed_int32():
     await decoded.read(reader)
 
     assert decoded.bucket_num == -1
+
+
+@pytest.mark.asyncio
+async def test_upstream_block_info_omits_out_of_order_buckets_before_revision_54480():
+    writer = BufferedWriter()
+    info = BlockInfo()
+    info.out_of_order_buckets = [3, -7]
+
+    await info.write(
+        writer,
+        constants.DBMS_MIN_REVISION_WITH_VERSIONED_CLUSTER_FUNCTION_PROTOCOL,
+    )
+
+    assert bytes(writer.buffer) == b"\x01\x00\x02\xff\xff\xff\xff\x00"
+
+
+@pytest.mark.asyncio
+async def test_upstream_block_info_writes_out_of_order_buckets_at_revision_54480():
+    writer = BufferedWriter()
+    info = BlockInfo()
+    info.out_of_order_buckets = [3, -7]
+
+    await info.write(
+        writer,
+        constants.DBMS_MIN_REVISION_WITH_OUT_OF_ORDER_BUCKETS_IN_AGGREGATION,
+    )
+
+    assert bytes(writer.buffer) == (
+        b"\x01\x00"
+        b"\x02\xff\xff\xff\xff"
+        b"\x03\x02\x03\x00\x00\x00\xf9\xff\xff\xff"
+        b"\x00"
+    )
+
+
+@pytest.mark.asyncio
+async def test_upstream_block_info_reads_out_of_order_buckets_at_revision_54480():
+    writer = BufferedWriter()
+    await writer.write_varint(1)
+    await writer.write_uint8(0)
+    await writer.write_varint(2)
+    await writer.write_int32(-1)
+    await writer.write_varint(3)
+    await writer.write_varint(2)
+    await writer.write_int32(3)
+    await writer.write_int32(-7)
+    await writer.write_varint(0)
+
+    stream = asyncio.StreamReader()
+    stream.feed_data(bytes(writer.buffer))
+    stream.feed_eof()
+    reader = BufferedReader(stream)
+    decoded = BlockInfo()
+
+    await decoded.read(
+        reader,
+        constants.DBMS_MIN_REVISION_WITH_OUT_OF_ORDER_BUCKETS_IN_AGGREGATION,
+    )
+
+    assert decoded.out_of_order_buckets == [3, -7]
+    await assert_reader_exhausted(reader)
 
 
 @pytest.mark.asyncio

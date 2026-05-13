@@ -1,20 +1,28 @@
+from asynch.proto import constants
 from asynch.proto.columns import nestedcolumn
 from asynch.proto.streams.buffered import BufferedReader, BufferedWriter
 
 
 class BlockInfo:
-    is_overflows = False
-    bucket_num = -1
+    def __init__(self):
+        self.is_overflows = False
+        self.bucket_num = -1
+        self.out_of_order_buckets = []
 
-    async def write(self, writer: BufferedWriter):
+    async def write(self, writer: BufferedWriter, revision: int = constants.CLIENT_REVISION):
         # Set of pairs (`FIELD_NUM`, value) in binary form. Then 0.
         await writer.write_varint(1)
         await writer.write_uint8(self.is_overflows)
         await writer.write_varint(2)
         await writer.write_int32(self.bucket_num)
+        if revision >= constants.DBMS_MIN_REVISION_WITH_OUT_OF_ORDER_BUCKETS_IN_AGGREGATION:
+            await writer.write_varint(3)
+            await writer.write_varint(len(self.out_of_order_buckets))
+            for bucket in self.out_of_order_buckets:
+                await writer.write_int32(bucket)
         await writer.write_varint(0)
 
-    async def read(self, reader: BufferedReader):
+    async def read(self, reader: BufferedReader, revision: int = constants.CLIENT_REVISION):
         while True:
             field_num = await reader.read_varint()
             if not field_num:
@@ -25,6 +33,18 @@ class BlockInfo:
 
             elif field_num == 2:
                 self.bucket_num = await reader.read_int32()
+
+            elif (
+                field_num == 3
+                and revision >= constants.DBMS_MIN_REVISION_WITH_OUT_OF_ORDER_BUCKETS_IN_AGGREGATION
+            ):
+                buckets_count = await reader.read_varint()
+                self.out_of_order_buckets = [
+                    await reader.read_int32() for _ in range(buckets_count)
+                ]
+
+            else:
+                raise ValueError(f"Unknown BlockInfo field number: {field_num}")
 
 
 class BaseBlock:
