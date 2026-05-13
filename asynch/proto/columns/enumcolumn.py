@@ -9,14 +9,15 @@ from .intcolumn import IntColumn
 class EnumColumn(IntColumn):
     py_types = (Enum,) + compat.integer_types + compat.string_types
 
-    def __init__(self, enum_cls, **kwargs):
-        self.enum_cls = enum_cls
+    def __init__(self, name_by_value, value_by_name, **kwargs):
+        self.name_by_value = name_by_value
+        self.value_by_name = value_by_name
         super().__init__(**kwargs)
 
     def before_write_items(self, items, nulls_map=None):
         null_value = self.null_value
-
-        enum_cls = self.enum_cls
+        name_by_value = self.name_by_value
+        value_by_name = self.value_by_name
 
         for i, item in enumerate(items):
             if nulls_map and nulls_map[i]:
@@ -28,25 +29,26 @@ class EnumColumn(IntColumn):
             # Check real enum value
             try:
                 if isinstance(source_value, compat.string_types):
-                    items[i] = enum_cls[source_value].value
+                    items[i] = value_by_name[source_value]
                 else:
-                    items[i] = enum_cls(source_value).value
+                    items[i] = value_by_name[name_by_value[source_value]]
             except (ValueError, KeyError):
                 choices = ", ".join(
-                    "'{}' = {}".format(x.name.replace("'", r"\'"), x.value) for x in enum_cls
+                    "'{}' = {}".format(name.replace("'", r"\'"), value)
+                    for name, value in value_by_name.items()
                 )
-                enum_str = f"{enum_cls.__name__}({choices})"
+                enum_str = f"{self.ch_type}({choices})"
 
                 raise LogicalError(f"Unknown element '{source_value}' for type {enum_str}")
 
     def after_read_items(self, items, nulls_map=None):
-        enum_cls = self.enum_cls
+        name_by_value = self.name_by_value
 
         if nulls_map is None:
-            return tuple(enum_cls(item).name for item in items)
+            return tuple(name_by_value[item] for item in items)
         else:
             return tuple(
-                (None if is_null else enum_cls(items[i]).name)
+                (None if is_null else name_by_value[items[i]])
                 for i, is_null in enumerate(nulls_map)
             )
 
@@ -71,11 +73,13 @@ def create_enum_column(spec, column_options):
         params = spec[7:-1]
         cls = Enum16Column
 
-    return cls(Enum(cls.ch_type, _parse_options(params)), **column_options)
+    name_by_value, value_by_name = _parse_options(params)
+    return cls(name_by_value, value_by_name, **column_options)
 
 
 def _parse_options(option_string):
-    options = dict()
+    name_by_value = {}
+    value_by_name = {}
     after_name = False
     escaped = False
     quote_character = None
@@ -91,7 +95,9 @@ def _parse_options(option_string):
             if ch in (" ", "="):
                 pass
             elif ch == ",":
-                options[name] = int(value)
+                value = int(value)
+                name_by_value[value] = name
+                value_by_name[name] = value
                 after_name = False
                 name = ""
                 value = ""  # reset before collecting new option
@@ -112,6 +118,8 @@ def _parse_options(option_string):
                 quote_character = ch
 
     if after_name:
-        options.setdefault(name, int(value))  # append word after last comma
+        value = int(value)
+        name_by_value[value] = name
+        value_by_name[name] = value
 
-    return options
+    return name_by_value, value_by_name
