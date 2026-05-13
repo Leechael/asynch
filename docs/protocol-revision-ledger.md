@@ -16,7 +16,7 @@ Primary sources:
 
 | Revision | Upstream symbol | Wire impact | Direction | `asynch` status | Required coverage |
 | --- | --- | --- | --- | --- | --- |
-| 54469 | `DBMS_MIN_REVISION_WITH_ROWS_BEFORE_AGGREGATION` | No native TCP read/write branch found in the current reference checkout. The symbol gates server-side statistics support only. | none | Accounted, no client-visible change | Constant parity test and ledger entry |
+| 54469 | `DBMS_MIN_REVISION_WITH_ROWS_BEFORE_AGGREGATION` | `ProfileInfo` appends `rows_before_aggregation` and its calculated flag after `calculated_rows_before_limit`. | server to client | Implemented | Boundary tests for `ProfileInfo` below and at the gate |
 | 54470 | `DBMS_MIN_PROTOCOL_VERSION_WITH_CHUNKED_PACKETS` | Addendum writes client send/receive chunked capability strings. Server hello includes server send/receive chunked capability strings. Default negotiation can remain `notchunked`. | both | Implemented | Boundary tests for addendum write and hello read alignment |
 | 54471 | `DBMS_MIN_REVISION_WITH_VERSIONED_PARALLEL_REPLICAS_PROTOCOL` | Server hello includes parallel replicas protocol version. Client addendum includes supported parallel replicas protocol version. | both | Implemented | Boundary tests for hello/addendum below and at the gate |
 | 54472 | `DBMS_MIN_PROTOCOL_VERSION_WITH_INTERSERVER_EXTERNALLY_GRANTED_ROLES` | Query packet includes serialized externally granted roles before the interserver secret hash. Normal client queries send an empty roles string. | client to server | Implemented | Boundary tests for query packet layout below and at the gate |

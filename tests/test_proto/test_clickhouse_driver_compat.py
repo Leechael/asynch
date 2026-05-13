@@ -9,7 +9,12 @@ import pytest
 
 from asynch.errors import UnexpectedPacketFromServerError
 from asynch.proto import constants
-from asynch.proto.block import BlockInfo, ColumnOrientedBlock, RowOrientedBlock
+from asynch.proto.block import (
+    BlockInfo,
+    BlockStreamProfileInfo,
+    ColumnOrientedBlock,
+    RowOrientedBlock,
+)
 from asynch.proto.columns.datetimecolumn import create_datetime_column
 from asynch.proto.connection import SUBSTITUTE_PARAMS_STYLE_ENV
 from asynch.proto.connection import Connection as ProtoConnection
@@ -221,6 +226,7 @@ def test_upstream_protocol_revision_matches_clickhouse_driver_0_2_10():
     assert constants.DBMS_MIN_REVISION_WITH_SSH_AUTHENTICATION == 54466
     assert constants.DBMS_MIN_REVISION_WITH_TABLE_READ_ONLY_CHECK == 54467
     assert constants.DBMS_MIN_REVISION_WITH_SYSTEM_KEYWORDS_TABLE == 54468
+    assert constants.DBMS_MIN_REVISION_WITH_ROWS_BEFORE_AGGREGATION == 54469
     assert constants.DBMS_MIN_PROTOCOL_VERSION_WITH_CHUNKED_PACKETS == 54470
     assert constants.DBMS_PARALLEL_REPLICAS_PROTOCOL_VERSION == 7
     assert constants.DBMS_MIN_REVISION_WITH_VERSIONED_PARALLEL_REPLICAS_PROTOCOL == 54471
@@ -389,6 +395,54 @@ async def test_upstream_receive_hello_tracks_used_revision():
     assert conn.server_info.revision == 54483
     assert conn.server_info.used_revision == constants.CLIENT_REVISION
     assert conn.reader.position == conn.reader.current_buffer_size
+
+
+@pytest.mark.asyncio
+async def test_upstream_profile_info_omits_rows_before_aggregation_before_revision_54469():
+    writer = BufferedWriter()
+    await writer.write_varint(1)  # rows
+    await writer.write_varint(2)  # blocks
+    await writer.write_varint(3)  # bytes
+    await writer.write_uint8(0)  # applied_limit
+    await writer.write_varint(4)  # rows_before_limit
+    await writer.write_uint8(1)  # calculated_rows_before_limit
+
+    stream = asyncio.StreamReader()
+    stream.feed_data(bytes(writer.buffer))
+    stream.feed_eof()
+    reader = BufferedReader(stream)
+    profile_info = BlockStreamProfileInfo(reader)
+
+    await profile_info.read(constants.DBMS_MIN_REVISION_WITH_SYSTEM_KEYWORDS_TABLE)
+
+    assert profile_info.rows_before_aggregation == 0
+    assert profile_info.calculated_rows_before_aggregation is False
+    await assert_reader_exhausted(reader)
+
+
+@pytest.mark.asyncio
+async def test_upstream_profile_info_reads_rows_before_aggregation_at_revision_54469():
+    writer = BufferedWriter()
+    await writer.write_varint(1)  # rows
+    await writer.write_varint(2)  # blocks
+    await writer.write_varint(3)  # bytes
+    await writer.write_uint8(0)  # applied_limit
+    await writer.write_varint(4)  # rows_before_limit
+    await writer.write_uint8(1)  # calculated_rows_before_limit
+    await writer.write_varint(42)  # rows_before_aggregation
+    await writer.write_uint8(1)  # calculated_rows_before_aggregation
+
+    stream = asyncio.StreamReader()
+    stream.feed_data(bytes(writer.buffer))
+    stream.feed_eof()
+    reader = BufferedReader(stream)
+    profile_info = BlockStreamProfileInfo(reader)
+
+    await profile_info.read(constants.DBMS_MIN_REVISION_WITH_ROWS_BEFORE_AGGREGATION)
+
+    assert profile_info.rows_before_aggregation == 42
+    assert profile_info.calculated_rows_before_aggregation is True
+    await assert_reader_exhausted(reader)
 
 
 @pytest.mark.asyncio

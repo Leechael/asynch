@@ -496,7 +496,7 @@ class Connection:
 
     async def receive_profile_info(self):
         profile_info = BlockStreamProfileInfo(self.reader)
-        await profile_info.read()
+        await profile_info.read(self.server_info.used_revision)
         return profile_info
 
     async def receive_multistring_message(self, packet_type: int):

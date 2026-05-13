@@ -242,10 +242,13 @@ class BlockStreamProfileInfo:
         self.applied_limit = False  # bool
         self.rows_before_limit = 0
         self.calculated_rows_before_limit = 0  # bool
+        self.rows_before_aggregation = 0
+        self.calculated_rows_before_aggregation = False
         self.reader = reader
 
     async def read(
         self,
+        revision: int = constants.CLIENT_REVISION,
     ):
         self.rows = await self.reader.read_varint()
         self.blocks = await self.reader.read_varint()
@@ -253,3 +256,6 @@ class BlockStreamProfileInfo:
         self.applied_limit = bool(await self.reader.read_uint8())
         self.rows_before_limit = await self.reader.read_varint()
         self.calculated_rows_before_limit = bool(await self.reader.read_uint8())
+        if revision >= constants.DBMS_MIN_REVISION_WITH_ROWS_BEFORE_AGGREGATION:
+            self.rows_before_aggregation = await self.reader.read_varint()
+            self.calculated_rows_before_aggregation = bool(await self.reader.read_uint8())
