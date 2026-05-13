@@ -166,3 +166,6 @@ cython_debug/
 
 # ruff stuff
 .ruff_cache
+
+# Local upstream reference checkouts.
+repos/
