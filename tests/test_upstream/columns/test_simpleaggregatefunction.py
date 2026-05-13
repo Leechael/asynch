@@ -26,9 +26,7 @@ async def test_simple(conn):
 async def test_nullable(conn):
     data = [(3,), (None,), (2,)]
 
-    async with create_table(
-        conn, "a SimpleAggregateFunction(any, Nullable(Int32))"
-    ) as table:
+    async with create_table(conn, "a SimpleAggregateFunction(any, Nullable(Int32))") as table:
         await execute(conn, f"INSERT INTO {table} (a) VALUES", data)
 
         inserted = await execute(conn, f"SELECT * FROM {table}")
@@ -49,10 +47,7 @@ async def test_simple_agg_function(conn):
 
 
 async def test_simple_agg_function_nullable(conn):
-    columns = (
-        "a SimpleAggregateFunction(anyLast, "
-        "Nullable(Enum8('hello' = -1, 'world' = 2)))"
-    )
+    columns = "a SimpleAggregateFunction(anyLast, Nullable(Enum8('hello' = -1, 'world' = 2)))"
     data = [(A.hello,), (A.world,), (None,), (-1,), (2,)]
 
     async with create_table(conn, columns) as table:

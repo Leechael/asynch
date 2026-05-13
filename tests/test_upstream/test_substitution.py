@@ -126,10 +126,7 @@ async def test_datetime_with_timezone(conn):
 
     assert_subst(SINGLE_TPL, params, "SELECT '2017-07-13 20:40:00'")
 
-    tpl = (
-        "SELECT toDateTime(toInt32(toDateTime(%(x)s))), "
-        "toInt32(toDateTime(%(x)s))"
-    )
+    tpl = "SELECT toDateTime(toInt32(toDateTime(%(x)s))), toInt32(toDateTime(%(x)s))"
 
     server_tz = timezone(conn._connection.server_info.get_timezone())
     instant = aware.astimezone(utc)

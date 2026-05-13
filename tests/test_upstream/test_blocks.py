@@ -104,9 +104,7 @@ async def test_select_with_column_types(conn):
 
 async def test_select_with_columnar_with_column_types(conn):
     progress = await conn._connection.execute_with_progress(
-        "SELECT arrayJoin(A) -1 as j,"
-        "arrayJoin(A)+1 as k FROM("
-        "SELECT range(3) as A)",
+        "SELECT arrayJoin(A) -1 as j,arrayJoin(A)+1 as k FROM(SELECT range(3) as A)",
         columnar=True,
         with_column_types=True,
     )
@@ -172,8 +170,7 @@ async def test_select_with_iter(conn):
 
 async def test_select_with_iter_with_column_types(conn):
     result = await conn._connection.execute_iter(
-        "SELECT CAST(number AS UInt32) as number "
-        "FROM system.numbers LIMIT 10",
+        "SELECT CAST(number AS UInt32) as number FROM system.numbers LIMIT 10",
         with_column_types=True,
     )
 

@@ -57,8 +57,7 @@ async def test_settings_apply(conn, settings, expected):
 
     rv = await _execute(
         conn,
-        "SELECT name, value, changed FROM system.settings "
-        f"WHERE name = '{setting_name}'",
+        f"SELECT name, value, changed FROM system.settings WHERE name = '{setting_name}'",
         settings=settings,
     )
 
@@ -68,8 +67,7 @@ async def test_settings_apply(conn, settings, expected):
 async def test_max_threads_apply(conn):
     rv = await _execute(
         conn,
-        "SELECT name, value, changed FROM system.settings "
-        "WHERE name = 'max_threads'",
+        "SELECT name, value, changed FROM system.settings WHERE name = 'max_threads'",
         settings={"max_threads": 42},
     )
 
@@ -77,8 +75,7 @@ async def test_max_threads_apply(conn):
 
     await _execute(
         conn,
-        "SELECT name, value, changed FROM system.settings "
-        "WHERE name = 'max_threads'",
+        "SELECT name, value, changed FROM system.settings WHERE name = 'max_threads'",
         settings={"max_threads": "auto"},
     )
 
@@ -101,8 +98,7 @@ async def test_client_settings(config):
     async with Connection(**_connection_kwargs(config, {"max_query_size": 142})) as conn:
         rv = await _execute(
             conn,
-            "SELECT name, value, changed FROM system.settings "
-            "WHERE name = 'max_query_size'",
+            "SELECT name, value, changed FROM system.settings WHERE name = 'max_query_size'",
         )
 
     assert rv == [("max_query_size", "142", 1)]
@@ -112,8 +108,7 @@ async def test_query_settings_override_client_settings(config):
     async with Connection(**_connection_kwargs(config, {"max_query_size": 142})) as conn:
         rv = await _execute(
             conn,
-            "SELECT name, value, changed FROM system.settings "
-            "WHERE name = 'max_query_size'",
+            "SELECT name, value, changed FROM system.settings WHERE name = 'max_query_size'",
             settings={"max_query_size": 242},
         )
 

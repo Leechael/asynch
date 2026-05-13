@@ -50,9 +50,7 @@ async def test_nullable(conn):
 async def test_nested_tuple_with_common_types(conn):
     data = [(("one", (1, "a"), "two"),), (("three", (2, "b"), "four"),)]
 
-    async with create_table(
-        conn, "a Tuple(String, Tuple(Int32, String), String)"
-    ) as table:
+    async with create_table(conn, "a Tuple(String, Tuple(Int32, String), String)") as table:
         await execute(conn, f"INSERT INTO {table} (a) VALUES", data)
 
         inserted = await execute(conn, f"SELECT * FROM {table}")
@@ -61,12 +59,7 @@ async def test_nested_tuple_with_common_types(conn):
 
 
 async def test_tuple_of_tuples(conn):
-    columns = (
-        "a Tuple("
-        "Tuple(Int32, String),"
-        "Tuple(Enum8('hello' = 1, 'world' = 2), Date)"
-        ")"
-    )
+    columns = "a Tuple(Tuple(Int32, String),Tuple(Enum8('hello' = 1, 'world' = 2), Date))"
     data = [
         (((1, "a"), (1, date(2020, 3, 11))),),
         (((2, "b"), (2, date(2020, 3, 12))),),

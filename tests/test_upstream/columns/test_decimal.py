@@ -33,9 +33,7 @@ async def test_different_precisions(conn):
         )
     ]
 
-    async with create_table(
-        conn, "a Decimal32(2), b Decimal64(2), c Decimal128(2)"
-    ) as table:
+    async with create_table(conn, "a Decimal32(2), b Decimal64(2), c Decimal128(2)") as table:
         await execute(conn, f"INSERT INTO {table} (a, b, c) VALUES", data)
 
         inserted = await execute(conn, f"SELECT * FROM {table}")
@@ -52,9 +50,7 @@ async def test_different_precisions_negative(conn):
         )
     ]
 
-    async with create_table(
-        conn, "a Decimal32(2), b Decimal64(2), c Decimal128(2)"
-    ) as table:
+    async with create_table(conn, "a Decimal32(2), b Decimal64(2), c Decimal128(2)") as table:
         await execute(conn, f"INSERT INTO {table} (a, b, c) VALUES", data)
 
         inserted = await execute(conn, f"SELECT * FROM {table}")
@@ -68,9 +64,7 @@ async def test_max_precisions(conn):
         (Decimal(-(10**9) + 1), Decimal(-(10**18) + 1), Decimal(-(10**38) + 1)),
     ]
 
-    async with create_table(
-        conn, "a Decimal32(0), b Decimal64(0), c Decimal128(0)"
-    ) as table:
+    async with create_table(conn, "a Decimal32(0), b Decimal64(0), c Decimal128(0)") as table:
         await execute(conn, f"INSERT INTO {table} (a, b, c) VALUES", data)
 
         inserted = await execute(conn, f"SELECT * FROM {table}")

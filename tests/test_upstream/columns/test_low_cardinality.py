@@ -40,9 +40,7 @@ async def test_int8(conn):
 async def test_nullable_int8(conn):
     data = [(None,), (-1,), (0,), (1,), (None,)]
 
-    async with low_cardinality_table(
-        conn, "a LowCardinality(Nullable(Int8))"
-    ) as table:
+    async with low_cardinality_table(conn, "a LowCardinality(Nullable(Int8))") as table:
         await execute(conn, f"INSERT INTO {table} (a) VALUES", data)
 
         inserted = await execute(conn, f"SELECT * FROM {table}")
@@ -65,9 +63,7 @@ async def test_date(conn):
 async def test_nullable_date(conn):
     data = [(date(2023, 4, 1),), (None,), (date(1970, 1, 1),)]
 
-    async with low_cardinality_table(
-        conn, "a LowCardinality(Nullable(Date))"
-    ) as table:
+    async with low_cardinality_table(conn, "a LowCardinality(Nullable(Date))") as table:
         await execute(conn, f"INSERT INTO {table} (a) VALUES", data)
 
         inserted = await execute(conn, f"SELECT * FROM {table}")
@@ -78,9 +74,7 @@ async def test_nullable_date(conn):
 async def test_nullable_uuid(conn):
     data = [(UUID("2efcead4-ff55-4db5-bdb4-6b36a308d8e0"),), (None,)]
 
-    async with low_cardinality_table(
-        conn, "a LowCardinality(Nullable(UUID))"
-    ) as table:
+    async with low_cardinality_table(conn, "a LowCardinality(Nullable(UUID))") as table:
         await execute(conn, f"INSERT INTO {table} (a) VALUES", data)
 
         inserted = await execute(conn, f"SELECT * FROM {table}")
@@ -146,9 +140,7 @@ async def test_string(conn):
 async def test_fixed_string(conn):
     data = [("test",), ("low",), ("cardinality",), ("test",), ("test",), ("",)]
 
-    async with low_cardinality_table(
-        conn, "a LowCardinality(FixedString(12))"
-    ) as table:
+    async with low_cardinality_table(conn, "a LowCardinality(FixedString(12))") as table:
         await execute(conn, f"INSERT INTO {table} (a) VALUES", data)
 
         inserted = await execute(conn, f"SELECT * FROM {table}")
@@ -159,9 +151,7 @@ async def test_fixed_string(conn):
 async def test_nullable_string(conn):
     data = [("test",), ("",), (None,)]
 
-    async with low_cardinality_table(
-        conn, "a LowCardinality(Nullable(String))"
-    ) as table:
+    async with low_cardinality_table(conn, "a LowCardinality(Nullable(String))") as table:
         await execute(conn, f"INSERT INTO {table} (a) VALUES", data)
 
         inserted = await execute(conn, f"SELECT * FROM {table}")

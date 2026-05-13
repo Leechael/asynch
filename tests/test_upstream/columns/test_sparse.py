@@ -65,9 +65,7 @@ async def test_sparse_tuples(conn):
         (0, (0, (0, 0))),
     ]
 
-    async with create_sparse_table(
-        conn, "a Int32, b Tuple(Int32, Tuple(Int32, Int32))"
-    ) as table:
+    async with create_sparse_table(conn, "a Int32, b Tuple(Int32, Tuple(Int32, Int32))") as table:
         await execute(conn, f"INSERT INTO {table} VALUES", data)
 
         inserted = await execute(conn, f"SELECT * FROM {table}")

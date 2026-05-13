@@ -87,7 +87,9 @@ async def test_read_all_packets_on_execute_iter(config):
 
 async def test_client_revision(config):
     async with Connection(
-        **_connection_kwargs(config, client_revision=constants.DBMS_MIN_REVISION_WITH_SERVER_TIMEZONE)
+        **_connection_kwargs(
+            config, client_revision=constants.DBMS_MIN_REVISION_WITH_SERVER_TIMEZONE
+        )
     ) as conn:
         rv = await _execute(conn, "SELECT 1")
 

@@ -148,8 +148,7 @@ async def test_insert_from_select(conn):
     async with create_table(conn, "a UInt64"):
         inserted = await _execute(
             conn,
-            f"INSERT INTO {TABLE_NAME} (a) "
-            "SELECT number FROM system.numbers LIMIT 5",
+            f"INSERT INTO {TABLE_NAME} (a) SELECT number FROM system.numbers LIMIT 5",
         )
 
     assert inserted == []
@@ -172,8 +171,7 @@ async def test_insert_from_input(conn):
     async with create_table(conn, "a Int8"):
         await _execute(
             conn,
-            f"INSERT INTO {TABLE_NAME} (a) "
-            "SELECT a FROM input ('a Int8') FORMAT Native",
+            f"INSERT INTO {TABLE_NAME} (a) SELECT a FROM input ('a Int8') FORMAT Native",
             [{"a": 1}],
             settings={"session_timezone": "UTC"},
         )

@@ -145,9 +145,7 @@ def test_compress_block_size():
     c = Connection(dsn="clickhouse://host?compress_block_size=100500")
     assert c._connection.compress_block_size is None
 
-    c = Connection(
-        dsn="clickhouse://host?compress_block_size=100500&compression=1"
-    )
+    c = Connection(dsn="clickhouse://host?compress_block_size=100500&compression=1")
     assert c._connection.compress_block_size == 100500
 
 

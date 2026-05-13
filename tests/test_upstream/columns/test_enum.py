@@ -20,10 +20,7 @@ class B(IntEnum):
 
 async def test_simple(conn):
     data = [(A.hello, B.bar), (A.world, B.foo), (-1, 300), (2, -300)]
-    columns = (
-        "a Enum8('hello' = -1, 'world' = 2), "
-        "b Enum16('foo' = -300, 'bar' = 300)"
-    )
+    columns = "a Enum8('hello' = -1, 'world' = 2), b Enum16('foo' = -300, 'bar' = 300)"
 
     async with create_table(conn, columns) as table:
         await execute(conn, f"INSERT INTO {table} (a, b) VALUES", data)
@@ -85,9 +82,7 @@ async def test_comma_and_space_in_name(conn):
 async def test_nullable(conn):
     data = [(None,), (A.hello,), (None,), (A.world,)]
 
-    async with create_table(
-        conn, "a Nullable(Enum8('hello' = -1, 'world' = 2))"
-    ) as table:
+    async with create_table(conn, "a Nullable(Enum8('hello' = -1, 'world' = 2))") as table:
         await execute(conn, f"INSERT INTO {table} (a) VALUES", data)
 
         inserted = await execute(conn, f"SELECT * FROM {table}")
@@ -98,9 +93,7 @@ async def test_nullable(conn):
 async def test_invalid_python_names(conn):
     data = [(1,), (2,), (3,), ("",), ("mro",)]
 
-    async with create_table(
-        conn, "a Enum8('mro' = 1, '' = 2, 'test' = 3)"
-    ) as table:
+    async with create_table(conn, "a Enum8('mro' = 1, '' = 2, 'test' = 3)") as table:
         await execute(conn, f"INSERT INTO {table} (a) VALUES", data)
 
         inserted = await execute(conn, f"SELECT * FROM {table}")

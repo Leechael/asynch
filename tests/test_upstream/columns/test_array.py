@@ -44,9 +44,7 @@ async def test_write_column_as_nested_array(conn):
 async def test_nested_with_enum(conn):
     data = [([["hello", "world"], ["hello"]],)]
 
-    async with create_table(
-        conn, "a Array(Array(Enum8('hello' = -1, 'world' = 2)))"
-    ) as table:
+    async with create_table(conn, "a Array(Array(Enum8('hello' = -1, 'world' = 2)))") as table:
         await execute(conn, f"INSERT INTO {table} (a) VALUES", data)
 
         inserted = await execute(conn, f"SELECT * FROM {table}")

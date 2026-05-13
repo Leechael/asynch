@@ -197,9 +197,7 @@ async def test_use_client_timezone(conn, monkeypatch):
                 settings=settings,
             )
 
-            timestamps = await execute(
-                conn, f"SELECT toInt32(a) FROM {table}", settings=settings
-            )
+            timestamps = await execute(conn, f"SELECT toInt32(a) FROM {table}", settings=settings)
             inserted = await execute(conn, f"SELECT * FROM {table}", settings=settings)
 
     assert timestamps == [(1499985600,)]
@@ -247,9 +245,7 @@ async def test_datetime_with_timezone_use_client_timezone(conn, monkeypatch):
                 settings=settings,
             )
 
-            timestamps = await execute(
-                conn, f"SELECT toInt32(a) FROM {table}", settings=settings
-            )
+            timestamps = await execute(conn, f"SELECT toInt32(a) FROM {table}", settings=settings)
             inserted = await execute(conn, f"SELECT * FROM {table}", settings=settings)
 
     expected = datetime(2017, 7, 14, 0, 40)
@@ -285,13 +281,9 @@ async def test_column_use_client_timezone(conn, monkeypatch):
                 [(DT,)],
                 settings=settings,
             )
-            await insert_datetime_literal(
-                conn, table, "'2017-07-14 05:40:00'", settings=settings
-            )
+            await insert_datetime_literal(conn, table, "'2017-07-14 05:40:00'", settings=settings)
 
-            timestamps = await execute(
-                conn, f"SELECT toInt32(a) FROM {table}", settings=settings
-            )
+            timestamps = await execute(conn, f"SELECT toInt32(a) FROM {table}", settings=settings)
             inserted = await execute(conn, f"SELECT * FROM {table}", settings=settings)
 
     expected = COL_TZ.localize(DT)
@@ -338,9 +330,7 @@ async def test_datetime_with_timezone_column_use_client_timezone(conn, monkeypat
                 settings=settings,
             )
 
-            timestamps = await execute(
-                conn, f"SELECT toInt32(a) FROM {table}", settings=settings
-            )
+            timestamps = await execute(conn, f"SELECT toInt32(a) FROM {table}", settings=settings)
             inserted = await execute(conn, f"SELECT * FROM {table}", settings=settings)
 
     expected = COL_TZ.localize(datetime(2017, 7, 14, 0, 40))

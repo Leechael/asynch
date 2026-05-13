@@ -129,9 +129,7 @@ async def test_reset_on_query_error(conn):
 async def test_progress_info_increment(conn):
     await _execute(
         conn,
-        "SELECT x FROM ("
-        "SELECT number AS x FROM numbers(100000000)"
-        ") ORDER BY x ASC LIMIT 10",
+        "SELECT x FROM (SELECT number AS x FROM numbers(100000000)) ORDER BY x ASC LIMIT 10",
     )
 
     last_query = conn._connection.last_query

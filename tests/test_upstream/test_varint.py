@@ -22,7 +22,7 @@ async def test_check_not_negative():
     writer = BufferedWriter()
     await writer.write_varint(value)
     data = bytes(writer.buffer)
-    assert data == b"\xFF\xFF\xFF\xFF\t"
+    assert data == b"\xff\xff\xff\xff\t"
 
     stream = asyncio.StreamReader()
     stream.feed_data(data)

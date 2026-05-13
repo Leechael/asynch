@@ -23,9 +23,7 @@ async def test_ipv4_from_int(conn):
     data = [(167772161,)]
 
     async with create_table(conn, "a IPv4") as table:
-        await execute(
-            conn, f"INSERT INTO {table} (a) VALUES", data, types_check=True
-        )
+        await execute(conn, f"INSERT INTO {table} (a) VALUES", data, types_check=True)
 
         inserted = await execute(conn, f"SELECT * FROM {table}")
 
@@ -36,9 +34,7 @@ async def test_ipv4_from_str(conn):
     data = [("10.0.0.1",)]
 
     async with create_table(conn, "a IPv4") as table:
-        await execute(
-            conn, f"INSERT INTO {table} (a) VALUES", data, types_check=True
-        )
+        await execute(conn, f"INSERT INTO {table} (a) VALUES", data, types_check=True)
 
         inserted = await execute(conn, f"SELECT * FROM {table}")
 
@@ -103,9 +99,7 @@ async def test_ipv6_from_str(conn):
     data = [("79f4:e698:45de:a59b:2765:28e3:8d3a:35ae",)]
 
     async with create_table(conn, "a IPv6") as table:
-        await execute(
-            conn, f"INSERT INTO {table} (a) VALUES", data, types_check=True
-        )
+        await execute(conn, f"INSERT INTO {table} (a) VALUES", data, types_check=True)
 
         inserted = await execute(conn, f"SELECT * FROM {table}")
 
@@ -116,9 +110,7 @@ async def test_ipv6_from_bytes(conn):
     data = [(b"y\xf4\xe6\x98E\xde\xa5\x9b'e(\xe3\x8d:5\xae",)]
 
     async with create_table(conn, "a IPv6") as table:
-        await execute(
-            conn, f"INSERT INTO {table} (a) VALUES", data, types_check=True
-        )
+        await execute(conn, f"INSERT INTO {table} (a) VALUES", data, types_check=True)
 
         inserted = await execute(conn, f"SELECT * FROM {table}")
 

@@ -66,7 +66,9 @@ def escape_param(item: Any, context=None, for_server: bool = False) -> str:
     return escaped
 
 
-def escape_params(params: Mapping[str, Any], context=None, for_server: bool = False) -> dict[str, str]:
+def escape_params(
+    params: Mapping[str, Any], context=None, for_server: bool = False
+) -> dict[str, str]:
     return {
         key: escape_param(value, context=context, for_server=for_server)
         for key, value in params.items()

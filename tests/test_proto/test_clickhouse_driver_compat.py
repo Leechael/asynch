@@ -36,7 +36,9 @@ def _read_str(buffer: bytes, position: int) -> tuple[str, int]:
     return value, position + length
 
 
-def _read_settings_as_strings(buffer: bytes, position: int) -> tuple[dict[str, tuple[int, str]], int]:
+def _read_settings_as_strings(
+    buffer: bytes, position: int
+) -> tuple[dict[str, tuple[int, str]], int]:
     settings = {}
     while True:
         name, position = _read_str(buffer, position)

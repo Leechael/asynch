@@ -5,10 +5,7 @@ from tests.test_upstream.columns._helpers import create_table, execute
 
 pytestmark = pytest.mark.asyncio
 
-INT_COLUMNS = (
-    "a Int8, b Int16, c Int32, d Int64, "
-    "e UInt8, f UInt16, g UInt32, h UInt64"
-)
+INT_COLUMNS = "a Int8, b Int16, c Int32, d Int64, e UInt8, f UInt16, g UInt32, h UInt64"
 
 
 async def test_chop_to_type(conn):

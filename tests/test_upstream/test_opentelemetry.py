@@ -70,8 +70,7 @@ async def test_server_logs(config, settings):
         ("bad", "unexpected length 3, expected 55"),
         (
             "00-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-yyyyyyyyyyyyyyyy-01",
-            "Malformed traceparant header: "
-            "00-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-yyyyyyyyyyyyyyyy-01",
+            "Malformed traceparant header: 00-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-yyyyyyyyyyyyyyyy-01",
         ),
         (
             "01-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01",

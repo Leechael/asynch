@@ -63,9 +63,7 @@ async def test_json_as_named_tuple(conn):
     async with json_table(conn, "a Object('json')") as table:
         await execute(conn, f"INSERT INTO {table} (a) VALUES", data)
 
-        inserted_as_json = await execute(
-            conn, f"SELECT * FROM {table}", settings=JSON_SETTINGS
-        )
+        inserted_as_json = await execute(conn, f"SELECT * FROM {table}", settings=JSON_SETTINGS)
         inserted_as_tuple = await execute(
             conn,
             f"SELECT * FROM {table}",
