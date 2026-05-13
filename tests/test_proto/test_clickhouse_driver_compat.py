@@ -235,6 +235,7 @@ def test_upstream_protocol_revision_matches_clickhouse_driver_0_2_10():
     assert constants.DBMS_CLUSTER_PROCESSING_PROTOCOL_VERSION == 6
     assert constants.DBMS_MIN_REVISION_WITH_VERSIONED_CLUSTER_FUNCTION_PROTOCOL == 54479
     assert constants.DBMS_MIN_REVISION_WITH_OUT_OF_ORDER_BUCKETS_IN_AGGREGATION == 54480
+    assert constants.DBMS_MIN_REVISION_WITH_COMPRESSED_LOGS_PROFILE_EVENTS_COLUMNS == 54481
     assert constants.CLIENT_REVISION == constants.DBMS_MIN_REVISION_WITH_SYSTEM_KEYWORDS_TABLE
 
 
@@ -846,6 +847,56 @@ async def test_upstream_read_task_request_packet_has_no_block_payload():
     assert packet.type == ServerPacket.READ_TASK_REQUEST
     assert packet.read_task_request is True
     assert packet.block is None
+
+
+@pytest.mark.asyncio
+async def test_upstream_log_packet_uses_raw_block_reader_before_revision_54481():
+    writer = BufferedWriter()
+    await writer.write_varint(ServerPacket.LOG)
+    await writer.write_str("")
+
+    stream = asyncio.StreamReader()
+    stream.feed_data(bytes(writer.buffer))
+    stream.feed_eof()
+
+    conn = ProtoConnection()
+    conn.reader = BufferedReader(stream)
+    conn.server_info = SimpleNamespace(revision=54480, used_revision=54480)
+    conn.block_reader_raw = AsyncMock()
+    conn.block_reader = AsyncMock()
+    conn.block_reader_raw.read = AsyncMock(return_value=ColumnOrientedBlock())
+    conn.block_reader.read = AsyncMock(side_effect=AssertionError("unexpected compressed read"))
+    conn.log_block = lambda block: None
+
+    packet = await conn._receive_packet()
+
+    assert packet.type == ServerPacket.LOG
+    conn.block_reader_raw.read.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_upstream_log_packet_uses_compressed_block_reader_at_revision_54481():
+    writer = BufferedWriter()
+    await writer.write_varint(ServerPacket.LOG)
+    await writer.write_str("")
+
+    stream = asyncio.StreamReader()
+    stream.feed_data(bytes(writer.buffer))
+    stream.feed_eof()
+
+    conn = ProtoConnection()
+    conn.reader = BufferedReader(stream)
+    conn.server_info = SimpleNamespace(revision=54481, used_revision=54481)
+    conn.block_reader_raw = AsyncMock()
+    conn.block_reader = AsyncMock()
+    conn.block_reader_raw.read = AsyncMock(side_effect=AssertionError("unexpected raw read"))
+    conn.block_reader.read = AsyncMock(return_value=ColumnOrientedBlock())
+    conn.log_block = lambda block: None
+
+    packet = await conn._receive_packet()
+
+    assert packet.type == ServerPacket.LOG
+    conn.block_reader.read.assert_awaited_once()
 
 
 @pytest.mark.asyncio

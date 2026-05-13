@@ -40,7 +40,11 @@ from asynch.proto.result import (
 )
 from asynch.proto.settings import SettingsFlags, write_settings
 from asynch.proto.streams.block import BlockReader, BlockWriter
-from asynch.proto.streams.buffered import BufferedReader, BufferedWriter
+from asynch.proto.streams.buffered import (
+    BufferedReader,
+    BufferedWriter,
+    CompressedBufferedReader,
+)
 from asynch.proto.utils.escape import escape_params
 from asynch.proto.utils.helpers import chunks, column_chunks
 
@@ -497,7 +501,15 @@ class Connection:
 
     async def receive_multistring_message(self, packet_type: int):
         num = ServerPacket.strings_in_message(packet_type)
-        return [await self.reader.read_str() for _i in range(num)]
+        reader = self.reader
+        if (
+            packet_type == ServerPacket.TABLE_COLUMNS
+            and self.compression
+            and self.server_info.used_revision
+            >= constants.DBMS_MIN_REVISION_WITH_COMPRESSED_LOGS_PROFILE_EVENTS_COLUMNS
+        ):
+            reader = CompressedBufferedReader(self.reader, self.reader.reader)
+        return [await reader.read_str() for _i in range(num)]
 
     async def receive_part_uuids(self):
         num = await self.reader.read_varint()
@@ -578,7 +590,12 @@ class Connection:
             packet.block = await self.receive_data()
 
         elif packet_type == ServerPacket.LOG:
-            block = await self.receive_data(raw=True)
+            block = await self.receive_data(
+                raw=(
+                    self.server_info.used_revision
+                    < constants.DBMS_MIN_REVISION_WITH_COMPRESSED_LOGS_PROFILE_EVENTS_COLUMNS
+                )
+            )
             self.log_block(block)
         elif packet_type == ServerPacket.END_OF_STREAM:
             self.is_query_executing = False
@@ -604,7 +621,12 @@ class Connection:
             )
 
         elif packet_type == ServerPacket.PROFILE_EVENTS:
-            packet.block = await self.receive_data(raw=True)
+            packet.block = await self.receive_data(
+                raw=(
+                    self.server_info.used_revision
+                    < constants.DBMS_MIN_REVISION_WITH_COMPRESSED_LOGS_PROFILE_EVENTS_COLUMNS
+                )
+            )
         elif packet_type == ServerPacket.TIMEZONE_UPDATE:
             timezone = await self.reader.read_str()
             if timezone:
