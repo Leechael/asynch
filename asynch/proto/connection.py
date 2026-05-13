@@ -861,8 +861,10 @@ class Connection:
             return rv
 
     async def receive_end_of_insert_query(self):
+        count = 0
         while True:
             packet = await self.receive_packet()
+            count += 1
 
             if not packet:
                 break
@@ -874,6 +876,7 @@ class Connection:
                 "EndOfStream, Log, Progress or Exception", packet.type
             )
             raise UnexpectedPacketFromServerError(message)
+        print(f"[ASYNCH DEBUG] receive_end_of_insert_query drained {count} packets")
 
     async def receive_sample_block(self):
         while True:
