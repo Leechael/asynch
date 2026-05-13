@@ -86,6 +86,7 @@ class ClientInfo:
         self.initial_query_start_time_microseconds = int(time() * 1000000)
         self.script_query_number = 0
         self.script_line_number = 0
+        self.jwt = ""
 
     @property
     def empty(self):
@@ -180,3 +181,10 @@ class ClientInfo:
         if revision >= constants.DBMS_MIN_REVISION_WITH_QUERY_AND_LINE_NUMBERS:
             await self.writer.write_varint(self.script_query_number)
             await self.writer.write_varint(self.script_line_number)
+
+        if revision >= constants.DBMS_MIN_REVISON_WITH_JWT_IN_INTERSERVER:
+            if self.jwt:
+                await self.writer.write_uint8(1)
+                await self.writer.write_str(self.jwt)
+            else:
+                await self.writer.write_uint8(0)

@@ -224,6 +224,7 @@ def test_upstream_protocol_revision_matches_clickhouse_driver_0_2_10():
     assert constants.DBMS_MIN_REVISION_WITH_V2_DYNAMIC_AND_JSON_SERIALIZATION == 54473
     assert constants.DBMS_MIN_REVISION_WITH_SERVER_SETTINGS == 54474
     assert constants.DBMS_MIN_REVISION_WITH_QUERY_AND_LINE_NUMBERS == 54475
+    assert constants.DBMS_MIN_REVISON_WITH_JWT_IN_INTERSERVER == 54476
     assert constants.CLIENT_REVISION == constants.DBMS_MIN_REVISION_WITH_SYSTEM_KEYWORDS_TABLE
 
 
@@ -332,6 +333,31 @@ async def test_upstream_client_info_writes_query_numbers_at_revision_54475():
 
     assert script_query_number == 0
     assert script_line_number == 0
+    assert position == len(buffer)
+
+
+@pytest.mark.asyncio
+async def test_upstream_client_info_omits_jwt_marker_before_revision_54476():
+    buffer = await _client_info_bytes(constants.DBMS_MIN_REVISION_WITH_QUERY_AND_LINE_NUMBERS)
+
+    position = _skip_client_info_to_script_numbers(buffer)
+    _, position = _read_varint(buffer, position)  # script_query_number
+    _, position = _read_varint(buffer, position)  # script_line_number
+
+    assert position == len(buffer)
+
+
+@pytest.mark.asyncio
+async def test_upstream_client_info_writes_empty_jwt_marker_at_revision_54476():
+    buffer = await _client_info_bytes(constants.DBMS_MIN_REVISON_WITH_JWT_IN_INTERSERVER)
+
+    position = _skip_client_info_to_script_numbers(buffer)
+    _, position = _read_varint(buffer, position)  # script_query_number
+    _, position = _read_varint(buffer, position)  # script_line_number
+    jwt_marker = buffer[position]
+    position += 1
+
+    assert jwt_marker == 0
     assert position == len(buffer)
 
 
