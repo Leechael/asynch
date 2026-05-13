@@ -326,6 +326,14 @@ class Connection:
             if used_revision >= constants.DBMS_MIN_REVISION_WITH_INTERSERVER_SECRET_V2:
                 await self.reader.read_uint64()
 
+            if used_revision >= constants.DBMS_MIN_REVISION_WITH_SERVER_SETTINGS:
+                while True:
+                    setting_name = await self.reader.read_str()
+                    if not setting_name:
+                        break
+                    await self.reader.read_uint8()
+                    await self.reader.read_str()
+
             self.server_info = ServerInfo(
                 server_name,
                 server_version_major,
