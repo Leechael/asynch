@@ -14,6 +14,7 @@ from asynch.proto.columns.datetimecolumn import create_datetime_column
 from asynch.proto.connection import SUBSTITUTE_PARAMS_STYLE_ENV
 from asynch.proto.connection import Connection as ProtoConnection
 from asynch.proto.context import Context
+from asynch.proto.cs import ClientInfo, QueryKind
 from asynch.proto.protocol import ClientPacket, ServerPacket
 from asynch.proto.streams.block import BlockWriter
 from asynch.proto.streams.buffered import BufferedReader, BufferedWriter
@@ -108,6 +109,42 @@ def _skip_block_info(buffer: bytes, position: int) -> int:
             raise AssertionError(f"Unexpected block info field {field_num}")
 
 
+async def _client_info_bytes(revision: int) -> bytes:
+    conn = ProtoConnection()
+    writer = BufferedWriter()
+    client_info = ClientInfo(conn.client_name, writer, conn.context)
+    client_info.query_kind = QueryKind.INITIAL_QUERY
+
+    await client_info.write(revision)
+
+    return bytes(writer.buffer)
+
+
+def _skip_client_info_to_script_numbers(buffer: bytes) -> int:
+    position = 0
+
+    position += 1  # query_kind
+    _, position = _read_str(buffer, position)  # initial_user
+    _, position = _read_str(buffer, position)  # initial_query_id
+    _, position = _read_str(buffer, position)  # initial_address
+    position += 8  # initial_query_start_time_microseconds
+    position += 1  # interface
+    _, position = _read_str(buffer, position)  # os_user
+    _, position = _read_str(buffer, position)  # client_hostname
+    _, position = _read_str(buffer, position)  # client_name
+    _, position = _read_varint(buffer, position)  # client_version_major
+    _, position = _read_varint(buffer, position)  # client_version_minor
+    _, position = _read_varint(buffer, position)  # client_revision
+    _, position = _read_str(buffer, position)  # quota_key
+    _, position = _read_varint(buffer, position)  # distributed_depth
+    _, position = _read_varint(buffer, position)  # client_version_patch
+    position += 1  # have_opentelemetry
+    _, position = _read_varint(buffer, position)  # collaborate_with_initiator
+    _, position = _read_varint(buffer, position)  # count_participating_replicas
+    _, position = _read_varint(buffer, position)  # number_of_current_replica
+    return position
+
+
 async def _server_hello_packet(
     *,
     server_revision: int,
@@ -186,6 +223,7 @@ def test_upstream_protocol_revision_matches_clickhouse_driver_0_2_10():
     assert constants.DBMS_MIN_PROTOCOL_VERSION_WITH_INTERSERVER_EXTERNALLY_GRANTED_ROLES == 54472
     assert constants.DBMS_MIN_REVISION_WITH_V2_DYNAMIC_AND_JSON_SERIALIZATION == 54473
     assert constants.DBMS_MIN_REVISION_WITH_SERVER_SETTINGS == 54474
+    assert constants.DBMS_MIN_REVISION_WITH_QUERY_AND_LINE_NUMBERS == 54475
     assert constants.CLIENT_REVISION == constants.DBMS_MIN_REVISION_WITH_SYSTEM_KEYWORDS_TABLE
 
 
@@ -273,6 +311,28 @@ async def test_upstream_server_side_params_defer_local_substitution():
         query_id=None,
         params={"value": 1},
     )
+
+
+@pytest.mark.asyncio
+async def test_upstream_client_info_omits_query_numbers_before_revision_54475():
+    buffer = await _client_info_bytes(constants.DBMS_MIN_REVISION_WITH_SERVER_SETTINGS)
+
+    position = _skip_client_info_to_script_numbers(buffer)
+
+    assert position == len(buffer)
+
+
+@pytest.mark.asyncio
+async def test_upstream_client_info_writes_query_numbers_at_revision_54475():
+    buffer = await _client_info_bytes(constants.DBMS_MIN_REVISION_WITH_QUERY_AND_LINE_NUMBERS)
+
+    position = _skip_client_info_to_script_numbers(buffer)
+    script_query_number, position = _read_varint(buffer, position)
+    script_line_number, position = _read_varint(buffer, position)
+
+    assert script_query_number == 0
+    assert script_line_number == 0
+    assert position == len(buffer)
 
 
 @pytest.mark.asyncio

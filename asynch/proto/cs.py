@@ -84,6 +84,8 @@ class ClientInfo:
         )
         self.distributed_depth = 0
         self.initial_query_start_time_microseconds = int(time() * 1000000)
+        self.script_query_number = 0
+        self.script_line_number = 0
 
     @property
     def empty(self):
@@ -174,3 +176,7 @@ class ClientInfo:
             await self.writer.write_varint(
                 0,
             )  # number_of_current_replica
+
+        if revision >= constants.DBMS_MIN_REVISION_WITH_QUERY_AND_LINE_NUMBERS:
+            await self.writer.write_varint(self.script_query_number)
+            await self.writer.write_varint(self.script_line_number)
