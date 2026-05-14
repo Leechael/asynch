@@ -1,3 +1,4 @@
+import json
 from datetime import date, datetime, time
 from enum import Enum
 from typing import Any, Mapping
@@ -45,6 +46,13 @@ def escape_param(item: Any, context=None, for_server: bool = False) -> str:
     elif isinstance(item, list):
         escaped = "[%s]" % ", ".join(
             text_type(escape_param(x, context=context, for_server=for_server)) for x in item
+        )
+
+    elif isinstance(item, dict):
+        escaped = escape_param(
+            json.dumps(item, ensure_ascii=False, separators=(",", ":")),
+            context=context,
+            for_server=for_server,
         )
 
     elif isinstance(item, tuple):

@@ -186,6 +186,16 @@ async def test_array(conn):
 
 
 @pytest.mark.asyncio
+async def test_json_dict(conn):
+    params = {"x": {"a": {"b": "x"}, "n": 42}}
+
+    assert_subst(SINGLE_TPL, params, """SELECT '{"a":{"b":"x"},"n":42}'""")
+
+    rv = await execute(conn, "SELECT JSONExtractString(%(x)s, 'a', 'b')", params)
+    assert rv == [("x",)]
+
+
+@pytest.mark.asyncio
 async def test_tuple(conn):
     params = {"x": (1, None, 2)}
 
@@ -318,6 +328,17 @@ async def test_server_side_escaped_str(conn):
         settings={"server_side_params": True},
     )
     assert rv == [("'", 1)]
+
+
+@pytest.mark.asyncio
+async def test_server_side_json_dict(conn):
+    rv = await execute(
+        conn,
+        "SELECT JSONExtractInt({x:String}, 'n')",
+        {"x": {"n": 42}},
+        settings={"server_side_params": True},
+    )
+    assert rv == [(42,)]
 
 
 @pytest.mark.asyncio
