@@ -138,7 +138,7 @@ class Connection:
         self._closed = True
 
     async def commit(self):
-        raise NotSupportedError
+        return None
 
     async def connect(self) -> None:
         if self._opened:

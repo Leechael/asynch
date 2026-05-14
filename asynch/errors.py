@@ -422,7 +422,16 @@ class ClickHouseException(Error):
         return f"Code: {self.code}.{message}"
 
 
-class ServerException(ClickHouseException):
+class DatabaseError(ClickHouseException):
+    """ClickHouse DatabaseError.
+
+    Exception raised for errors that are related to the database.
+
+    It must be a subclass of Error.
+    """
+
+
+class ServerException(DatabaseError):
     def __init__(self, message, code=None, nested=None):
         self.message = message
         self.code = code
@@ -506,15 +515,6 @@ class InterfaceError(ClickHouseException):
 
     Exception raised for errors that are related to the database interface
     rather than the database itself.
-
-    It must be a subclass of Error.
-    """
-
-
-class DatabaseError(ClickHouseException):
-    """ClickHouse DatabaseError.
-
-    Exception raised for errors that are related to the database.
 
     It must be a subclass of Error.
     """

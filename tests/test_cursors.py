@@ -4,6 +4,7 @@ import pytest
 
 from asynch.connection import Connection
 from asynch.cursors import DictCursor
+from asynch.errors import ProgrammingError
 from asynch.proto import constants
 
 
@@ -253,6 +254,12 @@ async def test_cursror_iter(conn, size, expected_size, with_select):
         await cursor.execute("INSERT INTO test.test (a) VALUES", data)
         if with_select:
             await cursor.execute("SELECT * FROM test.test")
+
+        if not with_select:
+            with pytest.raises(ProgrammingError):
+                async for _ in cursor:
+                    pass
+            return
 
         index = 0
         async for one in cursor:

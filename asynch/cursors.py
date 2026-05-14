@@ -102,6 +102,8 @@ class Cursor:
             response = None
 
         if not response:
+            self._has_result_set = False
+            self._columns_with_types = None
             self._columns = self._types = self._rows = []
             return
 
@@ -111,7 +113,8 @@ class Cursor:
 
         else:
             rows, columns_with_types = response
-        self._columns_with_types = columns_with_types
+        self._has_result_set = bool(columns_with_types)
+        self._columns_with_types = columns_with_types if self._has_result_set else None
         if columns_with_types:
             self._columns, self._types = zip(*columns_with_types)
             if not self._stream_results:
@@ -138,7 +141,7 @@ class Cursor:
         return self._rowcount
 
     async def fetchone(self):
-        self._check_query_started()
+        self._check_result_set_available()
 
         if self._stream_results:
             try:
@@ -151,7 +154,7 @@ class Cursor:
         return self._rows.pop(0)
 
     async def fetchmany(self, size: Optional[int] = None):
-        self._check_query_started()
+        self._check_result_set_available()
 
         if size is None:
             size = self._arraysize
@@ -175,7 +178,7 @@ class Cursor:
         return rv
 
     async def fetchall(self):
-        self._check_query_started()
+        self._check_result_set_available()
 
         if self._stream_results:
             return [row async for row in self._rows]
@@ -203,6 +206,7 @@ class Cursor:
         self._query_id = ""
         self._external_tables = {}
         self._types_check = False
+        self._has_result_set = False
 
     def _make_external_tables(self):
         tables = []
@@ -283,7 +287,7 @@ class Cursor:
 
     @property
     def description(self):
-        if self._state == CursorStatus.ready:
+        if self._state == CursorStatus.ready or not self._has_result_set:
             return None
 
         columns = self._columns or []
@@ -297,6 +301,11 @@ class Cursor:
     def _check_query_started(self):
         if self._state == CursorStatus.ready:
             raise ProgrammingError(f"no results to fetch from the {self}")
+
+    def _check_result_set_available(self):
+        self._check_query_started()
+        if not self._has_result_set:
+            raise ProgrammingError(f"the previous operation did not produce a result set on {self}")
 
     def _check_query_executing(self):
         if self._connection._connection.is_query_executing:

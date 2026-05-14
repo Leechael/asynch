@@ -207,8 +207,10 @@ async def test_pep249_sizes(conn):
 async def test_ddl(conn):
     async with conn.cursor() as cursor:
         await cursor.execute("DROP TABLE IF EXISTS test.upstream_dbapi_ddl")
-        assert await cursor.fetchall() == []
+        assert cursor.description is None
         assert cursor.rowcount == -1
+        with pytest.raises(ProgrammingError):
+            await cursor.fetchall()
 
 
 async def test_cursor_repr(conn):

@@ -91,6 +91,9 @@ asyncio_mode = "auto"
 minversion = "8.3"
 testpaths = ["tests"]
 xfail_strict = true
+markers = [
+    "no_clickhouse: tests that do not need a running ClickHouse server"
+]
 
 [tool.ruff]
 indent-width = 4

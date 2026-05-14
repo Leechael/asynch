@@ -75,7 +75,11 @@ async def column_options():
 
 
 @pytest.fixture(scope="session", autouse=True)
-async def initialize_tests():
+async def initialize_tests(request):
+    if all(item.get_closest_marker("no_clickhouse") for item in request.session.items):
+        yield
+        return
+
     async with Connection(dsn=CONNECTION_DSN) as conn:
         async with conn.cursor(cursor=DictCursor) as cursor:
             await cursor.execute("create database if not exists test")
@@ -103,7 +107,11 @@ async def initialize_tests():
 
 
 @pytest.fixture(scope="function", autouse=True)
-async def truncate_table():
+async def truncate_table(request):
+    if request.node.get_closest_marker("no_clickhouse"):
+        yield
+        return
+
     async with Connection(dsn=CONNECTION_DSN) as conn:
         async with conn.cursor(cursor=DictCursor) as cursor:
             await cursor.execute("truncate table test.asynch")
