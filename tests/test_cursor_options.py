@@ -256,6 +256,8 @@ async def _settings(cursor, execute, statement, exc_dict):
         if attr_value and attr_value not in exc_dict["expected_attr_values"]:
             return False
 
+        return None
+
     return await cursor.fetchall()
 
 
