@@ -1,249 +1,310 @@
 # asynch
 
-![pypi](https://img.shields.io/pypi/v/asynch.svg?style=flat)
-![license](https://img.shields.io/github/license/long2ice/asynch)
-![workflows](https://github.com/long2ice/asynch/workflows/pypi/badge.svg)
-![workflows](https://github.com/long2ice/asynch/workflows/ci/badge.svg)
+![license](https://img.shields.io/github/license/Leechael/asynch)
+![ci](https://github.com/Leechael/asynch/actions/workflows/ci.yml/badge.svg)
 
-## Introduction
+`asynch` is an asyncio ClickHouse driver that speaks the native TCP protocol.
+It keeps the public import/package name from the original project, but this
+repository is now a maintained fork by **Leechael**.
 
-`asynch` is an asynchronous ClickHouse Python driver with native TCP interface support, which reuses most of [clickhouse-driver](https://github.com/mymarilyn/clickhouse-driver) features and complies with [PEP249](https://www.python.org/dev/peps/pep-0249/).
+The upstream project at `long2ice/asynch` has been quiet for a while. This fork
+is used as the default GitHub branch because it carries protocol, DB-API, type
+system, and test-suite updates needed by modern ClickHouse and downstream async
+SQLAlchemy integrations.
+
+## Why This Fork
+
+The original project already provided a useful async native driver. This fork
+continues that work with a practical compatibility goal:
+
+- Keep the native TCP driver usable with recent ClickHouse protocol revisions.
+- Preserve the existing async API and package name where possible.
+- Align the DB-API surface with the parts of PEP 249 that are independent of
+  sync vs async execution.
+- Keep behavior close to `clickhouse-driver` and compatible with
+  `clickhouse-sqlalchemy` async adapter work.
+- Test against both older CI ClickHouse images and newer real ClickHouse
+  instances.
+
+## What Changed From Upstream
+
+This branch contains substantial changes compared with the original project:
+
+- Native protocol support has been advanced through revision `54483`, including
+  newer handshake/addendum fields, query/client info fields, profile/progress
+  packets, server logs, compressed log/profile-event packets, parallel replica
+  protocol fields, and out-of-order aggregation bucket metadata.
+- Query parameter handling now covers both local substitution and ClickHouse
+  server-side parameters when the server revision supports them.
+- Date and DateTime escaping has been tightened, including DateTime64
+  fractional precision preservation.
+- The DB-API compatibility surface now exposes `apilevel`, `threadsafety`,
+  `paramstyle`, exception hierarchy, type constructors, type objects,
+  `description`, `rowcount`, and no-result-set fetch behavior.
+- ClickHouse type coverage has been expanded for newer or less common families
+  such as `BFloat16`, `Time`, `Time64`, `DateTime32`, `QBit`, `JSON`,
+  `Dynamic`, `Variant`, `Geometry`, `AggregateFunction`,
+  `SimpleAggregateFunction`, newer interval families, aliases, and conversion
+  edge cases.
+- Pooling, reconnection, insert-drain behavior, profile events, compressed
+  reads, and real-world operator/substitution cases have broader tests.
+- The test suite has been updated for Python 3.9 through 3.14, recent
+  dependency versions, and ClickHouse server capability differences.
 
 ## Installation
 
-```shell
-> pip install asynch
-```
-
-If you want to install [`clickhouse-cityhash`](https://pypi.org/project/clickhouse-cityhash/) to enable transport compression
+Until this fork is published under its own release channel, install it directly
+from GitHub:
 
 ```shell
-> pip install asynch[compression]
+pip install "asynch @ git+https://github.com/Leechael/asynch.git"
 ```
 
-## Release v0.3.0 announcement
+With optional cityhash support for ClickHouse compression:
 
-The version 0.2.5 should have been the v0.3.0 due to compatibility-breaking changes.
-Before upgrading to the v0.3.0, please pay attention to the incompatible changes like:
+```shell
+pip install "asynch[compression] @ git+https://github.com/Leechael/asynch.git"
+```
 
-- The `asynch/connection.py::connect` function is removed - you can use the `async with` a Connection instance.
-- The `asynch/connection.py::Connection.connected` property is renamed to `opened`.
-- The `asynch/pool.py::create_pool` function is removed - you can use the `async with` a Pool instance.
-- The deprecated methods from `Connection`, `Cursor` and `Pool` classes are removed.
-
-For more details, please refer to the project [CHANGELOG.md](./CHANGELOG.md) file.
-
-## Usage
-
-Basically, a connection to a ClickHouse server can be established in two ways:
-
-1. with a DSN string, e.g., `clickhouse://[user:password]@host:port/database`;
-
-    ```python
-    from asynch import Connection
-
-    # connecting with a DSN string
-    async def connect_database():
-        async with Connection(
-            dsn = "clickhouse://ch_user:P@55w0rD:@127.0.0.1:9000/chdb",
-        ) as conn:
-            pass
-    ```
-
-2. with separately given connection/DSN parameters: `user` (optional), `password` (optional), `host`, `port`, `database`.
-
-    ```python
-    from asynch import Connection
-
-    # connecting with DSN parameters
-    async def connect_database():
-        async with Connection(
-            user = "ch_user",
-            password = "P@55w0rD",
-            host = "127.0.0.1",
-            port = 9000,
-            database = "chdb",
-        ) as conn:
-            pass
-    ```
-
-If a DSN string is given, it takes priority over any specified connection parameter.
-
-Create a database and a table by executing SQL statements via an instance of the `Cursor` class (here its child `DictCursor` class) acquired from an instance of the `Connection` class.
+The import name remains unchanged:
 
 ```python
-async def create_table(conn: Connection):
-    async with conn.cursor(cursor=DictCursor) as cursor:
-        await cursor.execute("CREATE DATABASE IF NOT EXISTS test")
-        await cursor.execute("""
-            CREATE TABLE if not exists test.asynch
-            (
-                `id`       Int32,
-                `decimal`  Decimal(10, 2),
-                `date`     Date,
-                `datetime` DateTime,
-                `float`    Float32,
-                `uuid`     UUID,
-                `string`   String,
-                `ipv4`     IPv4,
-                `ipv6`     IPv6
-            )
-            ENGINE = MergeTree
-            ORDER BY id
-            """
-        )
+from asynch import Connection
 ```
 
-Fetching one row from an executed SQL statement:
+If you install `asynch` from PyPI without a Git URL, you may get the original
+upstream package instead of this maintained fork.
+
+## Quick Start
+
+Create a connection with a DSN:
 
 ```python
-async def fetchone(conn: Connection):
-    # by default, an instance of the `Cursor` class
-    async with conn.cursor() as cursor:
-        await cursor.execute("SELECT 1")
-        ret = await cursor.fetchone()
-        assert ret == (1,)
+from asynch import Connection
+
+
+async def main():
+    async with Connection(
+        dsn="clickhouse://default:@127.0.0.1:9000/default",
+    ) as conn:
+        async with conn.cursor() as cursor:
+            await cursor.execute("SELECT 1")
+            assert await cursor.fetchone() == (1,)
 ```
 
-Fetching all the rows from an executed SQL statement:
+Or pass connection parameters explicitly:
 
 ```python
-async def fetchall():
-    async with conn.cursor() as cursor:
-        await cursor.execute("SELECT 1")
-        ret = await cursor.fetchall()
-        assert ret == [(1,)]
+from asynch import Connection
+
+
+async def main():
+    async with Connection(
+        host="127.0.0.1",
+        port=9000,
+        user="default",
+        password="",
+        database="default",
+    ) as conn:
+        async with conn.cursor() as cursor:
+            await cursor.execute("SELECT version()")
+            print(await cursor.fetchone())
 ```
 
-Using an instance of the `DictCursor` class to get results as a sequence of `dict`ionaries representing the rows of an executed SQL query:
+## Cursor Usage
+
+Fetch all rows:
 
 ```python
-async def dict_cursor():
-    async with conn.cursor(cursor=DictCursor) as cursor:
-        await cursor.execute("SELECT 1")
-        ret = await cursor.fetchall()
-        assert ret == [{"1": 1}]
+async with conn.cursor() as cursor:
+    await cursor.execute("SELECT number FROM numbers(3)")
+    rows = await cursor.fetchall()
+    assert rows == [(0,), (1,), (2,)]
 ```
 
-Inserting data with `dict`s via a `DictCursor` instance:
+Use a dict cursor:
 
 ```python
 from asynch.cursors import DictCursor
 
-async def insert_dict():
-    async with conn.cursor(cursor=DictCursor) as cursor:
-        ret = await cursor.execute(
-            """INSERT INTO test.asynch(id,decimal,date,datetime,float,uuid,string,ipv4,ipv6) VALUES""",
-            [
-                {
-                    "id": 1,
-                    "decimal": 1,
-                    "date": "2020-08-08",
-                    "datetime": "2020-08-08 00:00:00",
-                    "float": 1,
-                    "uuid": "59e182c4-545d-4f30-8b32-cefea2d0d5ba",
-                    "string": "1",
-                    "ipv4": "0.0.0.0",
-                    "ipv6": "::",
-                }
-            ],
-        )
-        assert ret == 1
+
+async with conn.cursor(cursor=DictCursor) as cursor:
+    await cursor.execute("SELECT 1 AS value")
+    rows = await cursor.fetchall()
+    assert rows == [{"value": 1}]
 ```
 
-Inserting data with `tuple`s:
-
-```python
-async def insert_tuple():
-    async with conn.cursor(cursor=DictCursor) as cursor:
-        ret = await cursor.execute(
-            """INSERT INTO test.asynch(id,decimal,date,datetime,float,uuid,string,ipv4,ipv6) VALUES""",
-            [
-                (
-                    1,
-                    1,
-                    "2020-08-08",
-                    "2020-08-08 00:00:00",
-                    1,
-                    "59e182c4-545d-4f30-8b32-cefea2d0d5ba",
-                    "1",
-                    "0.0.0.0",
-                    "::",
-                )
-            ],
-        )
-        assert ret == 1
-```
-
-### ClickHouse async inserts and read-after-write
-
-`asynch` uses ClickHouse's native protocol. The visibility of inserted rows is controlled by the ClickHouse server settings.
-
-If the server has `async_insert=1` and `wait_for_async_insert=0`, an `INSERT` may return after ClickHouse accepts the data into its async insert buffer, before the rows are visible to a following `SELECT`. In that setup, this can return no rows even though `execute()` completed:
+Insert rows:
 
 ```python
 async with conn.cursor() as cursor:
-    await cursor.execute("INSERT INTO test.asynch(id) VALUES", [(1,)])
-    await cursor.execute("SELECT id FROM test.asynch WHERE id = 1")
+    await cursor.execute(
+        "INSERT INTO test.events (id, name) VALUES",
+        [(1, "alpha"), (2, "beta")],
+    )
+    assert cursor.rowcount == 2
+```
+
+Set per-query ClickHouse settings:
+
+```python
+async with conn.cursor() as cursor:
+    cursor.set_settings({"max_threads": 2})
+    await cursor.execute("SELECT count() FROM system.numbers LIMIT 10")
+```
+
+## Parameters
+
+Local parameter substitution uses DB-API-style `pyformat` placeholders:
+
+```python
+async with conn.cursor() as cursor:
+    await cursor.execute(
+        "SELECT %(value)s, %(name)s",
+        {"value": 42, "name": "Ada"},
+    )
+    assert await cursor.fetchone() == (42, "Ada")
+```
+
+Server-side ClickHouse parameters are supported when the negotiated server
+revision supports `DBMS_MIN_PROTOCOL_VERSION_WITH_PARAMETERS`:
+
+```python
+async with conn.cursor() as cursor:
+    cursor.set_settings({"server_side_params": True})
+    await cursor.execute(
+        "SELECT {value:Int32}, {text:String}",
+        {"value": 42, "text": "Ada"},
+    )
+    assert await cursor.fetchone() == (42, "Ada")
+```
+
+Older ClickHouse servers do not support server-side parameters. In that case,
+use local `pyformat` substitution.
+
+## DB-API Compatibility
+
+This is still an async driver, so `execute()`, `fetchone()`, `fetchall()`,
+`commit()`, and similar operations are awaited. The fork nevertheless aligns
+with PEP 249 where the concepts do not depend on sync execution:
+
+- `asynch.apilevel == "2.0"`
+- `asynch.threadsafety == 1`
+- `asynch.paramstyle == "pyformat"`
+- PEP 249 exception classes are exported.
+- `Date`, `Time`, `Timestamp`, `DateFromTicks`, `TimeFromTicks`,
+  `TimestampFromTicks`, and `Binary` are exported.
+- Cursor `description` follows the DB-API 7-item column tuple shape.
+- Cursor `rowcount` is maintained for selects, inserts, and no-result cases.
+- Fetching from a cursor without a result set raises `ProgrammingError`.
+
+ClickHouse is not a transactional database in the usual DB-API sense. In this
+fork, `commit()` is a no-op for compatibility and `rollback()` raises
+`NotSupportedError`.
+
+## Pooling
+
+```python
+from asynch.pool import Pool
+
+
+async def main():
+    async with Pool(minsize=1, maxsize=4) as pool:
+        async with pool.connection() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute("SELECT 1")
+                assert await cursor.fetchone() == (1,)
+```
+
+Manual lifecycle is also supported:
+
+```python
+pool = Pool(minsize=1, maxsize=4)
+await pool.startup()
+try:
+    async with pool.connection() as conn:
+        ...
+finally:
+    await pool.shutdown()
+```
+
+## ClickHouse Server Notes
+
+ClickHouse features vary by server version and by feature flags. This fork tries
+to negotiate protocol features and skip unsupported behavior in tests, but your
+application should still account for server capability differences.
+
+Examples:
+
+- `server_side_params` requires newer protocol support.
+- `JSON`, `Dynamic`, `Variant`, `QBit`, and some interval/type aliases depend on
+  ClickHouse version and experimental settings.
+- Some servers expose a type family but still reject it in table columns.
+- OpenTelemetry server log formatting differs across ClickHouse versions.
+
+### Async Inserts And Read-After-Write
+
+`asynch` uses ClickHouse's native protocol. Insert visibility is controlled by
+the ClickHouse server settings.
+
+If the server has `async_insert=1` and `wait_for_async_insert=0`, an `INSERT`
+may return after ClickHouse accepts data into the async insert buffer, before
+the rows are visible to a following `SELECT`:
+
+```python
+async with conn.cursor() as cursor:
+    await cursor.execute("INSERT INTO test.events (id) VALUES", [(1,)])
+    await cursor.execute("SELECT id FROM test.events WHERE id = 1")
     rows = await cursor.fetchall()
 ```
 
-For read-after-write behavior, either configure ClickHouse with `wait_for_async_insert=1`, or set it on the insert cursor:
+For read-after-write behavior, enable `wait_for_async_insert`:
 
 ```python
 async with conn.cursor() as cursor:
     cursor.set_settings({"wait_for_async_insert": 1})
-    await cursor.execute("INSERT INTO test.asynch(id) VALUES", [(1,)])
+    await cursor.execute("INSERT INTO test.events (id) VALUES", [(1,)])
 ```
 
-This is a ClickHouse server behavior, not Python `async` behavior. The async driver only makes socket I/O non-blocking; `async_insert` changes when ClickHouse reports an insert as complete.
+This is ClickHouse server behavior, not Python asyncio behavior.
 
-### Connection Pool
+## Development
 
-Before the v0.2.4:
+Install dependencies with Poetry:
 
-```python
-async def use_pool():
-    pool = await asynch.create_pool()
-    async with pool.acquire() as conn:
-        async with conn.cursor() as cursor:
-            await cursor.execute("SELECT 1")
-            ret = await cursor.fetchone()
-            assert ret == (1,)
-    pool.close()
-    await pool.wait_closed()
+```shell
+poetry install --extras compression --no-root --with lint,test
 ```
 
-Since the v0.2.5 -> v0.3.0:
+Run the CI checks locally:
 
-```python
-async def use_pool():
-    # init a Pool and fill it with the `minsize` opened connections
-    async with Pool(minsize=1, maxsize=2) as pool:
-        # acquire a connection from the pool
-        async with pool.connection() as conn:
-            async with conn.cursor() as cursor:
-                await cursor.execute("SELECT 1")
-                ret = await cursor.fetchone()
-                assert ret == (1,)
+```shell
+make ci
 ```
 
-Or, you may opne/close the pool manually:
+To test against a specific ClickHouse instance:
 
-```python
-async def use_pool():
-    pool = Pool(minsize=1, maxsize=2)
-    await pool.startup()
-
-    # some logic
-
-    await pool.shutdown()
+```shell
+CLICKHOUSE_DSN="clickhouse://default:@192.168.50.4:9000/default" make ci
 ```
 
-## ThanksTo
+Formatting and linting:
 
-- [clickhouse-driver](https://github.com/mymarilyn/clickhouse-driver), ClickHouse Python Driver with native interface support.
+```shell
+make check
+make lint
+```
+
+There are also manual memory-watch tools under `benchmark/` for long-running
+connection/query stress checks.
+
+## Maintainer
+
+This maintained fork is authored and maintained by **Leechael**.
+
+The original project was created by `long2ice` and reused ideas and behavior
+from `clickhouse-driver`.
 
 ## License
 
-This project is licensed under the [Apache-2.0](https://github.com/long2ice/asynch/blob/master/LICENSE) License.
+Apache-2.0. See [LICENSE](./LICENSE).
