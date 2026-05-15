@@ -132,5 +132,5 @@ fixable = [
 
 [tool.ruff.lint.per-file-ignores]
 "asynch/proto/settings/types.py" = ["A005"]
-"benchmark/main.py" = ["ERA", "S", "T20"]
+"benchmark/*.py" = ["ERA", "S", "T20"]
 "tests/*.py" = ["ERA", "S"]

@@ -111,7 +111,10 @@ async def test_bfloat16_read_write(column_options):
             "Time64(3)",
             ["01:02:03.456", timedelta(seconds=-5, microseconds=-250000)],
             b"\xc0\xd08\x00\x00\x00\x00\x00~\xeb\xff\xff\xff\xff\xff\xff",
-            (timedelta(hours=1, minutes=2, seconds=3, milliseconds=456), -timedelta(seconds=5, milliseconds=250)),
+            (
+                timedelta(hours=1, minutes=2, seconds=3, milliseconds=456),
+                -timedelta(seconds=5, milliseconds=250),
+            ),
         ),
     ],
 )

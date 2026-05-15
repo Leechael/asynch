@@ -12,10 +12,7 @@ def test_escape_datetime_omits_fraction_when_microseconds_are_zero():
 
 
 def test_escape_datetime_preserves_fraction_when_microseconds_are_present():
-    assert (
-        escape_param(datetime(2026, 1, 1, 0, 0, 0, 123000))
-        == "'2026-01-01 00:00:00.123000'"
-    )
+    assert escape_param(datetime(2026, 1, 1, 0, 0, 0, 123000)) == "'2026-01-01 00:00:00.123000'"
 
 
 def test_escape_time_omits_fraction_when_microseconds_are_zero():

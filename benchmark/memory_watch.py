@@ -11,7 +11,6 @@ from time import perf_counter
 from asynch.connection import Connection
 from asynch.proto import constants
 
-
 DEFAULT_DSN = (
     f"clickhouse://{os.environ.get('CLICKHOUSE_USER', constants.DEFAULT_USER)}:"
     f"{os.environ.get('CLICKHOUSE_PASSWORD', constants.DEFAULT_PASSWORD)}"

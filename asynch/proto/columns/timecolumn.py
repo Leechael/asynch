@@ -5,7 +5,9 @@ from decimal import Decimal
 from ..utils import compat
 from .base import FormatColumn
 
-TIME_RE = re.compile(r"^(?P<sign>-)?(?P<hours>\d+):(?P<minutes>\d{2}):(?P<seconds>\d{2})(?P<fraction>\.\d+)?$")
+TIME_RE = re.compile(
+    r"^(?P<sign>-)?(?P<hours>\d+):(?P<minutes>\d{2}):(?P<seconds>\d{2})(?P<fraction>\.\d+)?$"
+)
 
 
 def _parse_time_string(value):

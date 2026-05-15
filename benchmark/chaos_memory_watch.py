@@ -13,7 +13,6 @@ from time import perf_counter
 from asynch.connection import Connection
 from asynch.proto import constants
 
-
 DEFAULT_DSN = (
     f"clickhouse://{os.environ.get('CLICKHOUSE_USER', constants.DEFAULT_USER)}:"
     f"{os.environ.get('CLICKHOUSE_PASSWORD', constants.DEFAULT_PASSWORD)}"
@@ -156,8 +155,7 @@ async def abandon_stream(dsn: str, args) -> str:
     await conn.connect()
     try:
         result = await conn._connection.execute_iter(
-            f"SELECT number, sleepEachRow({args.sleep_each_row}) "
-            f"FROM numbers({args.chaos_rows})"
+            f"SELECT number, sleepEachRow({args.sleep_each_row}) FROM numbers({args.chaos_rows})"
         )
         consumed = 0
         try:
@@ -179,8 +177,7 @@ async def cancel_query_task(dsn: str, args) -> str:
     await conn.connect()
     task = asyncio.create_task(
         conn._connection.execute(
-            f"SELECT number, sleepEachRow({args.sleep_each_row}) "
-            f"FROM numbers({args.chaos_rows})"
+            f"SELECT number, sleepEachRow({args.sleep_each_row}) FROM numbers({args.chaos_rows})"
         )
     )
     try:
@@ -211,8 +208,7 @@ async def disconnect_during_query(dsn: str, args) -> str:
     await conn.connect()
     task = asyncio.create_task(
         conn._connection.execute(
-            f"SELECT number, sleepEachRow({args.sleep_each_row}) "
-            f"FROM numbers({args.chaos_rows})"
+            f"SELECT number, sleepEachRow({args.sleep_each_row}) FROM numbers({args.chaos_rows})"
         )
     )
     try:

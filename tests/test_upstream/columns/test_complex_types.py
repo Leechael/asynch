@@ -37,7 +37,9 @@ async def test_variant_and_dynamic_roundtrip(conn, column_type, value, expected)
         pytest.skip(f"ClickHouse server does not expose {family}")
 
     async with create_table(conn, f"a {column_type}", settings=EXPERIMENTAL_SETTINGS) as table:
-        await execute(conn, f"INSERT INTO {table} VALUES", [(value,)], settings=EXPERIMENTAL_SETTINGS)
+        await execute(
+            conn, f"INSERT INTO {table} VALUES", [(value,)], settings=EXPERIMENTAL_SETTINGS
+        )
 
         inserted = await execute(conn, f"SELECT * FROM {table}", settings=EXPERIMENTAL_SETTINGS)
 
@@ -50,7 +52,9 @@ async def test_json_roundtrip(conn):
 
     value = {"a": 1, "b": "x", "c": 1.5, "d": True}
     async with create_table(conn, "a JSON", settings=EXPERIMENTAL_SETTINGS) as table:
-        await execute(conn, f"INSERT INTO {table} VALUES", [(value,)], settings=EXPERIMENTAL_SETTINGS)
+        await execute(
+            conn, f"INSERT INTO {table} VALUES", [(value,)], settings=EXPERIMENTAL_SETTINGS
+        )
 
         inserted = await execute(conn, f"SELECT * FROM {table}", settings=EXPERIMENTAL_SETTINGS)
 
@@ -63,7 +67,9 @@ async def test_qbit_roundtrip(conn, column_type):
         pytest.skip("ClickHouse server does not expose QBit")
 
     async with create_table(conn, f"a {column_type}", settings=EXPERIMENTAL_SETTINGS) as table:
-        await execute(conn, f"INSERT INTO {table} VALUES", [([1.0, 2.0],)], settings=EXPERIMENTAL_SETTINGS)
+        await execute(
+            conn, f"INSERT INTO {table} VALUES", [([1.0, 2.0],)], settings=EXPERIMENTAL_SETTINGS
+        )
 
         inserted = await execute(conn, f"SELECT * FROM {table}", settings=EXPERIMENTAL_SETTINGS)
 

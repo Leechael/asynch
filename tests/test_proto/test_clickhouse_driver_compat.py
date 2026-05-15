@@ -244,7 +244,9 @@ def test_upstream_protocol_revision_matches_clickhouse_driver_0_2_10():
     assert constants.DBMS_MIN_REVISION_WITH_COMPRESSED_LOGS_PROFILE_EVENTS_COLUMNS == 54481
     assert constants.DBMS_MIN_REVISION_WITH_REPLICATED_SERIALIZATION == 54482
     assert constants.DBMS_MIN_REVISION_WITH_NULLABLE_SPARSE_SERIALIZATION == 54483
-    assert constants.CLIENT_REVISION == constants.DBMS_MIN_REVISION_WITH_NULLABLE_SPARSE_SERIALIZATION
+    assert (
+        constants.CLIENT_REVISION == constants.DBMS_MIN_REVISION_WITH_NULLABLE_SPARSE_SERIALIZATION
+    )
 
 
 def test_upstream_packet_type_names_cover_protocol_54468_packets():
@@ -462,7 +464,9 @@ async def test_upstream_receive_hello_reads_chunked_capabilities_at_revision_544
 
     await conn.receive_hello()
 
-    assert conn.server_info.used_revision == constants.DBMS_MIN_PROTOCOL_VERSION_WITH_CHUNKED_PACKETS
+    assert (
+        conn.server_info.used_revision == constants.DBMS_MIN_PROTOCOL_VERSION_WITH_CHUNKED_PACKETS
+    )
     await assert_reader_exhausted(conn.reader)
 
 
@@ -529,8 +533,7 @@ async def test_upstream_receive_hello_reads_query_plan_version_at_revision_54477
     await conn.receive_hello()
 
     assert (
-        conn.server_info.used_revision
-        == constants.DBMS_MIN_REVISION_WITH_QUERY_PLAN_SERIALIZATION
+        conn.server_info.used_revision == constants.DBMS_MIN_REVISION_WITH_QUERY_PLAN_SERIALIZATION
     )
     await assert_reader_exhausted(conn.reader)
 
@@ -806,10 +809,7 @@ async def test_upstream_block_info_writes_out_of_order_buckets_at_revision_54480
     )
 
     assert bytes(writer.buffer) == (
-        b"\x01\x00"
-        b"\x02\xff\xff\xff\xff"
-        b"\x03\x02\x03\x00\x00\x00\xf9\xff\xff\xff"
-        b"\x00"
+        b"\x01\x00\x02\xff\xff\xff\xff\x03\x02\x03\x00\x00\x00\xf9\xff\xff\xff\x00"
     )
 
 

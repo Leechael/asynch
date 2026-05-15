@@ -27,8 +27,7 @@ class DynamicColumn(Column):
             await self.reader.read_varint()  # Historical max_dynamic_types parameter.
         num_dynamic_types = await self.reader.read_varint()
         dynamic_specs = [
-            (await self.reader.read_str(as_bytes=False)).strip()
-            for _ in range(num_dynamic_types)
+            (await self.reader.read_str(as_bytes=False)).strip() for _ in range(num_dynamic_types)
         ]
         self.variant_column = self._make_variant_column(dynamic_specs)
         await self.variant_column.read_state_prefix()

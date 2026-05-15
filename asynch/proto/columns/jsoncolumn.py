@@ -84,9 +84,7 @@ class JsonColumn(Column):
             if shared_data_version in (1, 2):
                 await self.reader.read_varint()
 
-        self.dynamic_columns = [
-            self.column_by_spec_getter("Dynamic") for _ in self.dynamic_paths
-        ]
+        self.dynamic_columns = [self.column_by_spec_getter("Dynamic") for _ in self.dynamic_paths]
         for column in self.dynamic_columns:
             await column.read_state_prefix()
         await self.shared_data_column.read_state_prefix()
@@ -95,9 +93,7 @@ class JsonColumn(Column):
         if self.mode == 1:
             return tuple(json.loads(item) for item in await self.string_column.read_items(n_items))
 
-        path_values = [
-            await column.read_data(n_items) for column in self.dynamic_columns
-        ]
+        path_values = [await column.read_data(n_items) for column in self.dynamic_columns]
         result = [dict() for _ in range(n_items)]
         for path, values in zip(self.dynamic_paths, path_values):
             for row, value in enumerate(values):
@@ -121,6 +117,7 @@ class JsonColumn(Column):
 
     async def read_items(self, n_items):
         return await self.read_data(n_items)
+
 
 def create_json_column(spec, column_by_spec_getter, column_options):
     if spec.startswith("Object('json')"):

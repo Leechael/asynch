@@ -46,7 +46,12 @@ async def test_time_and_time64_roundtrip(conn):
 
         inserted = await execute(conn, f"SELECT * FROM {table}", settings=settings)
 
-    assert inserted == [(timedelta(hours=1, minutes=2, seconds=3), timedelta(hours=1, minutes=2, seconds=3, milliseconds=456))]
+    assert inserted == [
+        (
+            timedelta(hours=1, minutes=2, seconds=3),
+            timedelta(hours=1, minutes=2, seconds=3, milliseconds=456),
+        )
+    ]
 
 
 async def test_datetime32_roundtrip(conn):
@@ -55,14 +60,18 @@ async def test_datetime32_roundtrip(conn):
 
     utc = timezone("UTC")
     async with create_table(conn, "a DateTime32('UTC')") as table:
-        await execute(conn, f"INSERT INTO {table} VALUES", [("2020-01-02 03:04:05",)], types_check=True)
+        await execute(
+            conn, f"INSERT INTO {table} VALUES", [("2020-01-02 03:04:05",)], types_check=True
+        )
 
         inserted = await execute(conn, f"SELECT * FROM {table}")
 
     assert inserted == [(utc.localize(datetime(2020, 1, 2, 3, 4, 5)),)]
 
 
-@pytest.mark.parametrize("column_type", ["Decimal32(2)", "Decimal64(4)", "Decimal128(6)", "Decimal256(8)"])
+@pytest.mark.parametrize(
+    "column_type", ["Decimal32(2)", "Decimal64(4)", "Decimal128(6)", "Decimal256(8)"]
+)
 async def test_exact_decimal_families_roundtrip(conn, column_type):
     async with create_table(conn, f"a {column_type}") as table:
         await execute(conn, f"INSERT INTO {table} VALUES", [(1.25,)], types_check=True)
@@ -72,7 +81,10 @@ async def test_exact_decimal_families_roundtrip(conn, column_type):
     assert inserted == [("1.25",)]
 
 
-@pytest.mark.parametrize("column_type", ["IntervalNanosecond", "IntervalMicrosecond", "IntervalMillisecond", "IntervalQuarter"])
+@pytest.mark.parametrize(
+    "column_type",
+    ["IntervalNanosecond", "IntervalMicrosecond", "IntervalMillisecond", "IntervalQuarter"],
+)
 async def test_remaining_interval_families_roundtrip(conn, column_type):
     if not await _has_type_family(conn, column_type):
         pytest.skip(f"ClickHouse server does not expose {column_type}")
@@ -124,7 +136,9 @@ async def test_alias_families_roundtrip(conn):
             types_check=True,
         )
 
-        inserted = await execute(conn, f"SELECT i, u, f, s, d, toDate(ts), toString(ip), b FROM {table}")
+        inserted = await execute(
+            conn, f"SELECT i, u, f, s, d, toDate(ts), toString(ip), b FROM {table}"
+        )
 
     assert inserted == [
         (-1, 2026, 1.5, "hello", Decimal("1.25"), date(2020, 1, 2), "127.0.0.1", True)

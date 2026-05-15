@@ -56,8 +56,7 @@ def test_complex_type_families_parse(spec, expected_type):
             "Dynamic",
             [1],
             bytes.fromhex(
-                "01 00 00 00 00 00 00 00 01 01 05 55 49 6e 74 38 "
-                "00 00 00 00 00 00 00 00 01 01"
+                "01 00 00 00 00 00 00 00 01 01 05 55 49 6e 74 38 00 00 00 00 00 00 00 00 01 01"
             ),
         ),
         (
@@ -72,8 +71,7 @@ def test_complex_type_families_parse(spec, expected_type):
             "Geometry",
             [("Point", (1.0, 2.0))],
             bytes.fromhex(
-                "00 00 00 00 00 00 00 00 03 00 00 00 00 00 00 f0 "
-                "3f 00 00 00 00 00 00 00 40"
+                "00 00 00 00 00 00 00 00 03 00 00 00 00 00 00 f0 3f 00 00 00 00 00 00 00 40"
             ),
         ),
         ("AggregateFunction(count)", [300], bytes.fromhex("ac 02")),
