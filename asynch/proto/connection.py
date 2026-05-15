@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import re
 import socket
 import ssl
 import warnings
@@ -61,6 +62,21 @@ _SUBSTITUTE_PARAMS_STYLE_ALIASES = {
     "percent": SUBSTITUTE_PARAMS_STYLE_PYFORMAT,
     "pyformat": SUBSTITUTE_PARAMS_STYLE_PYFORMAT,
 }
+_INSERT_VALUES_PLACEHOLDER_RE = re.compile(
+    r"""
+    \A(?P<prefix>\s*INSERT\b.*\bVALUES)\s*
+    \(
+        \s*
+        (?:
+            (?:%\([^)]+\)s|%s|:[A-Za-z_][A-Za-z0-9_]*|:\d+|\?)
+            \s*
+            (?:,\s*(?:%\([^)]+\)s|%s|:[A-Za-z_][A-Za-z0-9_]*|:\d+|\?)\s*)*
+        )
+    \)
+    \s*;?\s*\Z
+    """,
+    re.IGNORECASE | re.VERBOSE | re.DOTALL,
+)
 
 
 class QueryProcessingStage:
@@ -1079,6 +1095,14 @@ class Connection:
 
         raise ValueError(f"{SUBSTITUTE_PARAMS_STYLE_ENV} must be one of: format, pyformat")
 
+    @staticmethod
+    def normalize_insert_query_for_data(query: str) -> str:
+        match = _INSERT_VALUES_PLACEHOLDER_RE.match(query)
+        if match is None:
+            return query
+
+        return match.group("prefix").rstrip()
+
     async def process_insert_query(
         self,
         query_without_data,
@@ -1088,6 +1112,7 @@ class Connection:
         types_check=False,
         columnar=False,
     ):
+        query_without_data = self.normalize_insert_query_for_data(query_without_data)
         await self.send_query(query_without_data, query_id=query_id)
         await self.send_external_tables(external_tables, types_check=types_check)
 

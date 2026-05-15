@@ -146,6 +146,34 @@ def test_substitute_params_rejects_unknown_style(monkeypatch):
         ProtoConnection.substitute_params("SELECT {value}", {"value": 1})
 
 
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        (
+            "INSERT INTO test.test (a, b) VALUES (%(a)s, %(b)s)",
+            "INSERT INTO test.test (a, b) VALUES",
+        ),
+        (
+            "insert into test.test (a, b) values (:a, :b);",
+            "insert into test.test (a, b) values",
+        ),
+        (
+            "INSERT INTO test.test (a, b) VALUES (?, ?)",
+            "INSERT INTO test.test (a, b) VALUES",
+        ),
+        (
+            "INSERT INTO test.test (a, b) VALUES (1, %(b)s)",
+            "INSERT INTO test.test (a, b) VALUES (1, %(b)s)",
+        ),
+    ],
+)
+def test_normalize_insert_query_for_data_strips_dbapi_placeholder_template(
+    query,
+    expected,
+):
+    assert ProtoConnection.normalize_insert_query_for_data(query) == expected
+
+
 @pytest.mark.asyncio
 async def test_process_insert_query_drains_packets_until_end_of_stream():
     proto_conn = ProtoConnection()
@@ -166,6 +194,35 @@ async def test_process_insert_query_drains_packets_until_end_of_stream():
     assert proto_conn.receive_packet.await_count == 3
     proto_conn.send_data.assert_awaited_once_with(
         sample_block, [(1,)], types_check=False, columnar=False
+    )
+
+
+@pytest.mark.asyncio
+async def test_process_insert_query_sends_normalized_dbapi_placeholder_template():
+    proto_conn = ProtoConnection()
+    sample_block = RowOrientedBlock(columns_with_types=[("a", "UInt8"), ("b", "String")])
+
+    proto_conn.send_query = AsyncMock()
+    proto_conn.send_external_tables = AsyncMock()
+    proto_conn.receive_sample_block = AsyncMock(return_value=sample_block)
+    proto_conn.send_data = AsyncMock(return_value=1)
+    proto_conn.receive_packet = AsyncMock(return_value=False)
+
+    result = await proto_conn.process_insert_query(
+        "INSERT INTO test.test (a, b) VALUES (%(a)s, %(b)s)",
+        [{"a": 1, "b": "one"}],
+    )
+
+    assert result == 1
+    proto_conn.send_query.assert_awaited_once_with(
+        "INSERT INTO test.test (a, b) VALUES",
+        query_id=None,
+    )
+    proto_conn.send_data.assert_awaited_once_with(
+        sample_block,
+        [{"a": 1, "b": "one"}],
+        types_check=False,
+        columnar=False,
     )
 
 

@@ -192,6 +192,49 @@ async def test_executemany(conn: Connection):
 
 
 @pytest.mark.asyncio
+async def test_executemany_accepts_dbapi_insert_value_template(conn: Connection):
+    async with conn.cursor() as cursor:
+        await cursor.execute("DROP TABLE IF EXISTS test.executemany_template")
+        await cursor.execute(
+            """
+            CREATE TABLE test.executemany_template
+            (
+                id UInt64,
+                payload String
+            )
+            ENGINE = Memory
+            """
+        )
+        try:
+            rows = await cursor.executemany(
+                """
+                INSERT INTO test.executemany_template (id, payload)
+                VALUES (%(id)s, %(payload)s)
+                """,
+                [
+                    {"id": 1, "payload": "redacted-1"},
+                    {"id": 2, "payload": "redacted-2"},
+                ],
+            )
+
+            assert rows == 2
+
+            await cursor.execute(
+                """
+                SELECT id, payload
+                FROM test.executemany_template
+                ORDER BY id
+                """
+            )
+            assert await cursor.fetchall() == [
+                (1, "redacted-1"),
+                (2, "redacted-2"),
+            ]
+        finally:
+            await cursor.execute("DROP TABLE IF EXISTS test.executemany_template")
+
+
+@pytest.mark.asyncio
 async def test_table_ddl(conn: Connection):
     async with conn.cursor() as cursor:
         await cursor.execute("drop table if exists test.alter_table")
