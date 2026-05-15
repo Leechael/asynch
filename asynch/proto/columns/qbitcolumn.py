@@ -29,13 +29,16 @@ class QBitColumn(Column):
             await self.writer.write_fixed_strings(planes, self.bytes_per_plane)
 
     async def read_items(self, n_items):
-        planes_by_bit = [
-            [
-                bytes(await self.reader.read_fixed_str(self.bytes_per_plane, as_bytes=True))
-                for _ in range(n_items)
-            ]
-            for _ in range(self.element_bits)
-        ]
+        planes_by_bit = []
+        for _ in range(self.element_bits):
+            planes = []
+            for _ in range(n_items):
+                plane = await self.reader.read_fixed_str(
+                    self.bytes_per_plane,
+                    as_bytes=True,
+                )
+                planes.append(bytes(plane))
+            planes_by_bit.append(planes)
 
         result = []
         for row in range(n_items):
