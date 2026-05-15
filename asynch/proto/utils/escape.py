@@ -30,13 +30,19 @@ def escape_param(item: Any, context=None, for_server: bool = False) -> str:
         if item.tzinfo is not None and context is not None:
             server_tz = timezone(context.server_info.get_timezone())
             item = item.astimezone(server_tz)
-        escaped = "'%s'" % item.strftime("%Y-%m-%d %H:%M:%S.%f")
+        fmt = "%Y-%m-%d %H:%M:%S"
+        if item.microsecond:
+            fmt += ".%f"
+        escaped = "'%s'" % item.strftime(fmt)
 
     elif isinstance(item, date):
         escaped = "'%s'" % item.strftime("%Y-%m-%d")
 
     elif isinstance(item, time):
-        escaped = "'%s'" % item.strftime("%H:%M:%S.%f")
+        fmt = "%H:%M:%S"
+        if item.microsecond:
+            fmt += ".%f"
+        escaped = "'%s'" % item.strftime(fmt)
 
     elif isinstance(item, string_types):
         if for_server:
