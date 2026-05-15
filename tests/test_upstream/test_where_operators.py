@@ -7,7 +7,19 @@ from tests.test_upstream.columns._helpers import create_table, execute
 
 pytestmark = pytest.mark.asyncio
 
-JSON_SETTINGS = {"allow_experimental_json_type": 1}
+JSON_SETTINGS = {
+    "allow_experimental_json_type": 1,
+    "allow_experimental_object_type": 1,
+}
+
+
+async def has_type_family(conn, family):
+    rows = await execute(
+        conn,
+        "SELECT count() FROM system.data_type_families WHERE name = %(family)s",
+        {"family": family},
+    )
+    return bool(rows[0][0])
 
 
 async def test_where_scalar_comparison_operators(conn):
@@ -182,6 +194,9 @@ async def test_where_vector_distance_operators(conn):
 
 
 async def test_where_json_operators(conn):
+    if not await has_type_family(conn, "JSON"):
+        pytest.skip("ClickHouse server does not expose JSON")
+
     rows = [
         (1, {"user": {"name": "Ada"}, "score": 10, "active": True}),
         (2, {"user": {"name": "Grace"}, "score": 20, "active": False}),
