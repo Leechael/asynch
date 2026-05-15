@@ -94,6 +94,12 @@ async def test_dict_cursor(conn: Connection):
 
 @pytest.mark.asyncio
 async def test_server_side_params(conn: Connection):
+    if (
+        conn._connection.server_info.used_revision
+        < constants.DBMS_MIN_PROTOCOL_VERSION_WITH_PARAMETERS
+    ):
+        pytest.skip("ClickHouse server does not support server-side query parameters")
+
     async with conn.cursor() as cursor:
         cursor.set_settings({"server_side_params": True})
         await cursor.execute(
