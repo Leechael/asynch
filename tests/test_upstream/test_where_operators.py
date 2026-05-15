@@ -160,12 +160,12 @@ async def test_where_array_and_map_operators(conn):
 
 async def test_where_vector_distance_operators(conn):
     rows = [
-        (1, [1.0, 2.0]),
-        (2, [4.0, 6.0]),
-        (3, [10.0, 10.0]),
+        (1, (1.0, 2.0)),
+        (2, (4.0, 6.0)),
+        (3, (10.0, 10.0)),
     ]
 
-    async with create_table(conn, "id UInt8, vec Array(Float64)") as table:
+    async with create_table(conn, "id UInt8, vec Tuple(Float64, Float64)") as table:
         await execute(conn, f"INSERT INTO {table} VALUES", rows)
 
         result = await execute(
@@ -173,9 +173,9 @@ async def test_where_vector_distance_operators(conn):
             f"""
             SELECT id FROM {table}
             WHERE L2Distance(vec, %(needle)s) <= %(max_distance)s
-            ORDER BY id
-            """,
-            {"needle": [1.0, 2.0], "max_distance": 5.0},
+                ORDER BY id
+                """,
+            {"needle": (1.0, 2.0), "max_distance": 5.0},
         )
 
     assert result == [(1,), (2,)]
