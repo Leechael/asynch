@@ -4,6 +4,7 @@ from decimal import Decimal
 import pytest
 from pytz import timezone
 
+from asynch.errors import ServerException
 from tests.test_upstream.columns._helpers import create_table, execute
 
 pytestmark = pytest.mark.asyncio
@@ -89,10 +90,15 @@ async def test_remaining_interval_families_roundtrip(conn, column_type):
     if not await _has_type_family(conn, column_type):
         pytest.skip(f"ClickHouse server does not expose {column_type}")
 
-    async with create_table(conn, f"a {column_type}") as table:
-        await execute(conn, f"INSERT INTO {table} VALUES", [(3,)], types_check=True)
+    try:
+        async with create_table(conn, f"a {column_type}") as table:
+            await execute(conn, f"INSERT INTO {table} VALUES", [(3,)], types_check=True)
 
-        inserted = await execute(conn, f"SELECT * FROM {table}")
+            inserted = await execute(conn, f"SELECT * FROM {table}")
+    except ServerException as exc:
+        if "cannot be used in tables" in str(exc):
+            pytest.skip(f"ClickHouse server cannot use {column_type} in tables")
+        raise
 
     assert inserted == [(3,)]
 
