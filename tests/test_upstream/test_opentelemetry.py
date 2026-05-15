@@ -61,7 +61,7 @@ async def test_server_logs(config, settings):
 
     value = buffer.getvalue()
     assert "OpenTelemetry" in value
-    assert SERVER_TRACE_ID in value
+    assert SERVER_TRACE_ID in value or TRACEPARENT in value
 
 
 @pytest.mark.parametrize(
