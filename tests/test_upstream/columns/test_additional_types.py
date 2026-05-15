@@ -134,17 +134,33 @@ async def test_alias_families_roundtrip(conn):
         ip INET4,
         b BOOLEAN
     """
-    async with create_table(conn, columns) as table:
-        await execute(
-            conn,
-            f"INSERT INTO {table} VALUES",
-            [(-1, 2026, 1.5, "hello", 1.25, "2020-01-02 03:04:05", "127.0.0.1", True)],
-            types_check=True,
-        )
+    try:
+        async with create_table(conn, columns) as table:
+            await execute(
+                conn,
+                f"INSERT INTO {table} VALUES",
+                [
+                    (
+                        -1,
+                        2026,
+                        1.5,
+                        "hello",
+                        1.25,
+                        "2020-01-02 03:04:05",
+                        "127.0.0.1",
+                        True,
+                    )
+                ],
+                types_check=True,
+            )
 
-        inserted = await execute(
-            conn, f"SELECT i, u, f, s, d, toDate(ts), toString(ip), b FROM {table}"
-        )
+            inserted = await execute(
+                conn, f"SELECT i, u, f, s, d, toDate(ts), toString(ip), b FROM {table}"
+            )
+    except ServerException as exc:
+        if "Unknown data type family" in str(exc):
+            pytest.skip("ClickHouse server does not support all alias type families")
+        raise
 
     assert inserted == [
         (-1, 2026, 1.5, "hello", Decimal("1.25"), date(2020, 1, 2), "127.0.0.1", True)
