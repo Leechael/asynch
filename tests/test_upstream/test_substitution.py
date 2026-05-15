@@ -10,6 +10,7 @@ from uuid import UUID
 import pytest
 from pytz import timezone, utc
 
+from asynch.proto import constants
 from asynch.proto.connection import Connection as ProtoConnection
 
 SINGLE_TPL = "SELECT %(x)s"
@@ -51,6 +52,14 @@ async def execute(conn, query, params=None, settings=None, columnar=False):
         settings=settings,
         columnar=columnar,
     )
+
+
+def skip_without_server_side_params(conn):
+    if (
+        conn._connection.server_info.used_revision
+        < constants.DBMS_MIN_PROTOCOL_VERSION_WITH_PARAMETERS
+    ):
+        pytest.skip("ClickHouse server does not support server-side query parameters")
 
 
 @pytest.mark.asyncio
@@ -283,6 +292,8 @@ def test_substitute_object():
 
 @pytest.mark.asyncio
 async def test_server_side_int(conn):
+    skip_without_server_side_params(conn)
+
     rv = await execute(
         conn,
         "SELECT {x:Int32}",
@@ -294,6 +305,8 @@ async def test_server_side_int(conn):
 
 @pytest.mark.asyncio
 async def test_server_side_str(conn):
+    skip_without_server_side_params(conn)
+
     rv = await execute(
         conn,
         "SELECT {x:Int32}",
@@ -305,6 +318,8 @@ async def test_server_side_str(conn):
 
 @pytest.mark.asyncio
 async def test_server_side_escaped_str(conn):
+    skip_without_server_side_params(conn)
+
     rv = await execute(
         conn,
         "SELECT {x:String}, length({x:String})",
@@ -332,6 +347,8 @@ async def test_server_side_escaped_str(conn):
 
 @pytest.mark.asyncio
 async def test_server_side_json_dict(conn):
+    skip_without_server_side_params(conn)
+
     rv = await execute(
         conn,
         "SELECT JSONExtractInt({x:String}, 'n')",
