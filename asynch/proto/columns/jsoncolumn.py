@@ -176,7 +176,9 @@ def _flatten_json(value, prefix=""):
 
 
 def _set_json_path(target, path, value):
-    parts = path.split(".")
+    # Dots inside a key arrive escaped as %2E when the server has
+    # json_type_escape_dots_in_keys enabled (ClickHouse 25.8+).
+    parts = [part.replace("%2E", ".") for part in path.split(".")]
     for part in parts[:-1]:
         target = target.setdefault(part, {})
     target[parts[-1]] = value

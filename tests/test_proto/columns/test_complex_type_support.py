@@ -6,7 +6,7 @@ import pytest
 from asynch.proto.columns import get_column_by_spec
 from asynch.proto.columns.aggregatefunctioncolumn import AggregateFunctionColumn
 from asynch.proto.columns.dynamiccolumn import DYNAMIC_SERIALIZATION_VERSION_V1, DynamicColumn
-from asynch.proto.columns.jsoncolumn import JsonColumn
+from asynch.proto.columns.jsoncolumn import JsonColumn, _set_json_path
 from asynch.proto.columns.qbitcolumn import QBitColumn
 from asynch.proto.columns.variantcolumn import VariantColumn
 from asynch.proto.streams.buffered import BufferedWriter
@@ -55,6 +55,15 @@ async def test_dynamic_write_state_prefix_requires_prepare():
 
     with pytest.raises(RuntimeError, match="must be prepared"):
         await column.write_state_prefix()
+
+
+def test_set_json_path_unescapes_escaped_dots_in_keys():
+    target = {}
+
+    _set_json_path(target, "user%2Ename.first", "Ada")
+    _set_json_path(target, "plain", 1)
+
+    assert target == {"user.name": {"first": "Ada"}, "plain": 1}
 
 
 @pytest.mark.asyncio
