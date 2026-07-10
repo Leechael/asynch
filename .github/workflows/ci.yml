@@ -133,6 +133,8 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install ".[compression]"
           git clone --depth 1 https://github.com/Leechael/clickhouse-sqlalchemy.git /tmp/clickhouse-sqlalchemy
+          sed -i 's/except DeprecationWarning:/except (DeprecationWarning, RuntimeError):/' \
+            /tmp/clickhouse-sqlalchemy/tests/util.py
           python -m pip install --no-deps /tmp/clickhouse-sqlalchemy
           python -m pip install "SQLAlchemy>=2.0,<2.1" requests clickhouse-driver \
             pytest pytest-asyncio pytest-timeout greenlet alembic responses parameterized
