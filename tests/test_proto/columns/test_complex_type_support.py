@@ -6,7 +6,7 @@ import pytest
 from asynch.proto.columns import get_column_by_spec
 from asynch.proto.columns.aggregatefunctioncolumn import AggregateFunctionColumn
 from asynch.proto.columns.dynamiccolumn import DYNAMIC_SERIALIZATION_VERSION_V1, DynamicColumn
-from asynch.proto.columns.jsoncolumn import JsonColumn
+from asynch.proto.columns.jsoncolumn import JsonColumn, LegacyJsonColumn
 from asynch.proto.columns.qbitcolumn import QBitColumn
 from asynch.proto.columns.variantcolumn import VariantColumn
 from asynch.proto.streams.buffered import BufferedWriter
@@ -47,6 +47,15 @@ def test_complex_type_families_parse(spec, expected_type):
     column = get_column_by_spec(spec, _column_options())
 
     assert isinstance(column, expected_type)
+
+
+def test_json_uses_legacy_serialization_before_revision_54473():
+    options = _column_options()
+    options["context"].server_info.used_revision = 54469
+
+    column = get_column_by_spec("JSON", options)
+
+    assert isinstance(column, LegacyJsonColumn)
 
 
 @pytest.mark.asyncio

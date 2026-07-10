@@ -96,6 +96,7 @@ async def test_alt_hosts_fails_over_to_live_server(config):
         assert conn._connection.port == config.port
 
 
+@pytest.mark.no_clickhouse
 async def test_real_tls_handshake():
     dsn = os.environ.get("CLICKHOUSE_TLS_DSN")
     if not dsn:

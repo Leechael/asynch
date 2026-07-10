@@ -1,5 +1,6 @@
 import json
 
+from .. import constants
 from .base import Column
 from .stringcolumn import String
 
@@ -120,6 +121,15 @@ class JsonColumn(Column):
 
 
 def create_json_column(spec, column_by_spec_getter, column_options):
-    if spec.startswith("Object('json')"):
+    server_info = getattr(column_options["context"], "server_info", None)
+    used_revision = getattr(
+        server_info,
+        "used_revision",
+        constants.DBMS_MIN_REVISION_WITH_V2_DYNAMIC_AND_JSON_SERIALIZATION,
+    )
+    if (
+        spec.startswith("Object('json')")
+        or used_revision < constants.DBMS_MIN_REVISION_WITH_V2_DYNAMIC_AND_JSON_SERIALIZATION
+    ):
         return LegacyJsonColumn(column_by_spec_getter, **column_options)
     return JsonColumn(column_by_spec_getter, **column_options)
