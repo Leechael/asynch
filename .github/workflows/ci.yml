@@ -140,7 +140,12 @@ jobs:
             pytest pytest-asyncio pytest-timeout greenlet alembic responses parameterized
       - name: Test downstream asynch dialect
         working-directory: /tmp/clickhouse-sqlalchemy
-        run: >-
-          pytest -rs -v --timeout=20
-          tests/drivers/asynch
-          tests/drivers/test_asynch_soft_close.py
+        run: |
+          pytest -rs -v --timeout=20 tests/drivers/asynch \
+            --ignore=tests/drivers/asynch/test_cursor.py \
+            --ignore=tests/drivers/asynch/test_insert.py \
+            --ignore=tests/drivers/asynch/test_select.py
+          pytest -rs -v --timeout=20 tests/drivers/test_asynch_soft_close.py
+          pytest -rs -v --timeout=20 tests/drivers/asynch/test_cursor.py
+          pytest -rs -v --timeout=20 tests/drivers/asynch/test_insert.py
+          pytest -rs -v --timeout=20 tests/drivers/asynch/test_select.py
