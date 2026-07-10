@@ -30,16 +30,15 @@ jobs:
       clickhouse:
         image: ${{ matrix.clickhouse }}
         env:
-          CLICKHOUSE_PASSWORD: clickhouse
+          CLICKHOUSE_SKIP_USER_SETUP: "1"
         ports:
           - 9000:9000
         options: >-
-          --health-cmd "clickhouse-client --password clickhouse --query 'SELECT 1'"
+          --health-cmd "clickhouse-client --query 'SELECT 1'"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 20
     env:
-      CLICKHOUSE_PASSWORD: clickhouse
       ASYNCH_EXPECT_SERVER_REVISION: ${{ matrix.server_revision }}
     steps:
       - uses: actions/checkout@v6
@@ -66,16 +65,15 @@ jobs:
       clickhouse:
         image: clickhouse/clickhouse-server:latest
         env:
-          CLICKHOUSE_PASSWORD: clickhouse
+          CLICKHOUSE_SKIP_USER_SETUP: "1"
         ports:
           - 9000:9000
         options: >-
-          --health-cmd "clickhouse-client --password clickhouse --query 'SELECT 1'"
+          --health-cmd "clickhouse-client --query 'SELECT 1'"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 20
     env:
-      CLICKHOUSE_PASSWORD: clickhouse
       ASYNCH_MIN_SERVER_REVISION: "54483"
       ASYNCH_REQUIRED_TYPE_FAMILIES: JSON,Variant,Dynamic,QBit,BFloat16,Time
     steps:
@@ -99,16 +97,16 @@ jobs:
       clickhouse:
         image: clickhouse/clickhouse-server:latest
         env:
-          CLICKHOUSE_PASSWORD: clickhouse
+          CLICKHOUSE_SKIP_USER_SETUP: "1"
         ports:
           - 9000:9000
         options: >-
-          --health-cmd "clickhouse-client --password clickhouse --query 'SELECT 1'"
+          --health-cmd "clickhouse-client --query 'SELECT 1'"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 20
     env:
-      CLICKHOUSE_DSN: clickhouse://default:clickhouse@127.0.0.1:9000/default?compression=zstd
+      CLICKHOUSE_DSN: clickhouse://default:@127.0.0.1:9000/default?compression=zstd
       ASYNCH_MIN_SERVER_REVISION: "54483"
       ASYNCH_REQUIRED_TYPE_FAMILIES: JSON,Variant,Dynamic,QBit,BFloat16,Time
     steps:

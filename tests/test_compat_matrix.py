@@ -63,7 +63,7 @@ async def test_latest_server_exposes_revision_bound_type_families(conn):
 
 async def test_cancelled_query_disconnects_and_reconnects(config):
     async with Connection(**_connection_kwargs(config)) as conn:
-        task = asyncio.create_task(execute(conn, "SELECT sleepEachRow(0.05) FROM numbers(100)"))
+        task = asyncio.create_task(execute(conn, "SELECT sleepEachRow(0.05) FROM numbers(20)"))
         await asyncio.sleep(0.1)
         task.cancel()
 
