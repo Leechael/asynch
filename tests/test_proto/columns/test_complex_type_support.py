@@ -50,6 +50,14 @@ def test_complex_type_families_parse(spec, expected_type):
 
 
 @pytest.mark.asyncio
+async def test_dynamic_write_state_prefix_requires_prepare():
+    column = get_column_by_spec("Dynamic", _column_options())
+
+    with pytest.raises(RuntimeError, match="must be prepared"):
+        await column.write_state_prefix()
+
+
+@pytest.mark.asyncio
 async def test_json_uses_legacy_serialization_before_revision_54473():
     options = _column_options()
     options["context"].server_info.revision = 54469
