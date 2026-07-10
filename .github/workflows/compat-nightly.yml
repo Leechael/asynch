@@ -29,18 +29,21 @@ jobs:
     services:
       clickhouse:
         image: ${{ matrix.clickhouse }}
+        env:
+          CLICKHOUSE_PASSWORD: clickhouse
         ports:
           - 9000:9000
         options: >-
-          --health-cmd "clickhouse-client --query 'SELECT 1'"
+          --health-cmd "clickhouse-client --password clickhouse --query 'SELECT 1'"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 20
     env:
+      CLICKHOUSE_PASSWORD: clickhouse
       ASYNCH_EXPECT_SERVER_REVISION: ${{ matrix.server_revision }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
           cache: pip
@@ -62,19 +65,22 @@ jobs:
     services:
       clickhouse:
         image: clickhouse/clickhouse-server:latest
+        env:
+          CLICKHOUSE_PASSWORD: clickhouse
         ports:
           - 9000:9000
         options: >-
-          --health-cmd "clickhouse-client --query 'SELECT 1'"
+          --health-cmd "clickhouse-client --password clickhouse --query 'SELECT 1'"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 20
     env:
+      CLICKHOUSE_PASSWORD: clickhouse
       ASYNCH_MIN_SERVER_REVISION: "54483"
       ASYNCH_REQUIRED_TYPE_FAMILIES: JSON,Variant,Dynamic,QBit,BFloat16,Time
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
           cache: pip
@@ -92,20 +98,22 @@ jobs:
     services:
       clickhouse:
         image: clickhouse/clickhouse-server:latest
+        env:
+          CLICKHOUSE_PASSWORD: clickhouse
         ports:
           - 9000:9000
         options: >-
-          --health-cmd "clickhouse-client --query 'SELECT 1'"
+          --health-cmd "clickhouse-client --password clickhouse --query 'SELECT 1'"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 20
     env:
-      CLICKHOUSE_DSN: clickhouse://default:@127.0.0.1:9000/default?compression=zstd
+      CLICKHOUSE_DSN: clickhouse://default:clickhouse@127.0.0.1:9000/default?compression=zstd
       ASYNCH_MIN_SERVER_REVISION: "54483"
       ASYNCH_REQUIRED_TYPE_FAMILIES: JSON,Variant,Dynamic,QBit,BFloat16,Time
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
           cache: pip
@@ -123,8 +131,8 @@ jobs:
     env:
       ASYNCH_EXPECT_CITYHASH: "0"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
           cache: pip
@@ -140,8 +148,8 @@ jobs:
     name: TLS handshake and compression
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
           cache: pip
@@ -154,4 +162,3 @@ jobs:
         run: bash tests/ci/start-clickhouse-tls.sh
       - name: Test a verified TLS handshake with compression
         run: pytest tests/test_compat_matrix.py::test_real_tls_handshake
-

@@ -17,8 +17,8 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
           cache: pip
@@ -65,34 +65,37 @@ jobs:
             clickhouse: clickhouse/clickhouse-server:latest
             min_server_revision: "54483"
             client_revision: "54468"
-            dsn: clickhouse://default:@127.0.0.1:9000/default?client_revision=54468
+            dsn: clickhouse://default:clickhouse@127.0.0.1:9000/default?client_revision=54468
             required_types: JSON,Variant,Dynamic,QBit,BFloat16,Time
           - name: latest-client-54476
             python: "3.13"
             clickhouse: clickhouse/clickhouse-server:latest
             min_server_revision: "54483"
             client_revision: "54476"
-            dsn: clickhouse://default:@127.0.0.1:9000/default?client_revision=54476
+            dsn: clickhouse://default:clickhouse@127.0.0.1:9000/default?client_revision=54476
             required_types: JSON,Variant,Dynamic,QBit,BFloat16,Time
     services:
       clickhouse:
         image: ${{ matrix.clickhouse }}
+        env:
+          CLICKHOUSE_PASSWORD: clickhouse
         ports:
           - 9000:9000
         options: >-
-          --health-cmd "clickhouse-client --query 'SELECT 1'"
+          --health-cmd "clickhouse-client --password clickhouse --query 'SELECT 1'"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 20
     env:
+      CLICKHOUSE_PASSWORD: clickhouse
       ASYNCH_CLIENT_REVISION: ${{ matrix.client_revision }}
       ASYNCH_EXPECT_SERVER_REVISION: ${{ matrix.server_revision }}
       ASYNCH_MIN_SERVER_REVISION: ${{ matrix.min_server_revision }}
       ASYNCH_REQUIRED_TYPE_FAMILIES: ${{ matrix.required_types }}
       CLICKHOUSE_DSN: ${{ matrix.dsn }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
           cache: pip
@@ -110,17 +113,19 @@ jobs:
     services:
       clickhouse:
         image: clickhouse/clickhouse-server:latest
+        env:
+          CLICKHOUSE_PASSWORD: clickhouse
         ports:
           - 8123:8123
           - 9000:9000
         options: >-
-          --health-cmd "clickhouse-client --query 'SELECT 1'"
+          --health-cmd "clickhouse-client --password clickhouse --query 'SELECT 1'"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
           cache: pip
@@ -134,6 +139,8 @@ jobs:
             pytest pytest-asyncio pytest-timeout greenlet alembic responses parameterized
       - name: Test downstream asynch dialect
         working-directory: /tmp/clickhouse-sqlalchemy
+        env:
+          TEST_CLICKHOUSE_PASSWORD: clickhouse
         run: >-
           pytest -rs -v --timeout=20
           tests/drivers/asynch

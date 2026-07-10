@@ -29,6 +29,7 @@ cat >"$tls_dir/tls.xml" <<'XML'
 XML
 
 docker run --detach --name asynch-clickhouse-tls \
+  --env CLICKHOUSE_PASSWORD=clickhouse \
   --publish 9440:9440 \
   --volume "$tls_dir:/etc/clickhouse-server/certs:ro" \
   --volume "$tls_dir/tls.xml:/etc/clickhouse-server/config.d/tls.xml:ro" \
@@ -42,4 +43,4 @@ for _ in $(seq 1 60); do
 done
 
 timeout 1 bash -c "</dev/tcp/127.0.0.1/9440"
-echo "CLICKHOUSE_TLS_DSN=clickhouse://default:@localhost:9440/default?secure=true&verify=true&ca_certs=$tls_dir/server.crt&server_hostname=localhost" >>"$GITHUB_ENV"
+echo "CLICKHOUSE_TLS_DSN=clickhouse://default:clickhouse@localhost:9440/default?secure=true&verify=true&ca_certs=$tls_dir/server.crt&server_hostname=localhost" >>"$GITHUB_ENV"
