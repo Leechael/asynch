@@ -109,6 +109,8 @@ jobs:
   sqlalchemy:
     name: SQLAlchemy downstream / CH latest
     runs-on: ubuntu-latest
+    env:
+      CLICKHOUSE_SQLALCHEMY_REF: 61775263540aecba7edad701abc299f7812aaab1
     services:
       clickhouse:
         image: clickhouse/clickhouse-server:latest
@@ -132,7 +134,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install ".[compression]"
-          git clone --depth 1 https://github.com/Leechael/clickhouse-sqlalchemy.git /tmp/clickhouse-sqlalchemy
+          git init /tmp/clickhouse-sqlalchemy
+          git -C /tmp/clickhouse-sqlalchemy fetch --depth 1 \
+            https://github.com/Leechael/clickhouse-sqlalchemy.git "$CLICKHOUSE_SQLALCHEMY_REF"
+          git -C /tmp/clickhouse-sqlalchemy checkout FETCH_HEAD
           sed -i 's/except DeprecationWarning:/except (DeprecationWarning, RuntimeError):/' \
             /tmp/clickhouse-sqlalchemy/tests/util.py
           python -m pip install --no-deps /tmp/clickhouse-sqlalchemy
