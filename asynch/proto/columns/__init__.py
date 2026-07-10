@@ -312,6 +312,7 @@ async def write_column(
     column = get_column_by_spec(column_spec, column_options)
 
     try:
+        column.prepare_state_prefix(items)
         await column.write_state_prefix()
         await column.write_data(items)
 

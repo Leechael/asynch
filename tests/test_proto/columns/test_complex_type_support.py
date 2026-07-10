@@ -5,12 +5,14 @@ import pytest
 
 from asynch.proto.columns import get_column_by_spec
 from asynch.proto.columns.aggregatefunctioncolumn import AggregateFunctionColumn
-from asynch.proto.columns.dynamiccolumn import DynamicColumn
+from asynch.proto.columns.dynamiccolumn import DYNAMIC_SERIALIZATION_VERSION_V1, DynamicColumn
 from asynch.proto.columns.jsoncolumn import JsonColumn
 from asynch.proto.columns.qbitcolumn import QBitColumn
 from asynch.proto.columns.variantcolumn import VariantColumn
 from asynch.proto.streams.buffered import BufferedWriter
 from tests.test_proto.protocol_helpers import make_buffered_reader
+
+pytestmark = pytest.mark.no_clickhouse
 
 
 def _context():
@@ -82,10 +84,33 @@ def test_complex_type_families_parse(spec, expected_type):
 async def test_complex_type_native_bytes(spec, items, expected):
     column = get_column_by_spec(spec, _column_options())
 
+    column.prepare_state_prefix(items)
     await column.write_state_prefix()
     await column.write_data(items)
 
     assert bytes(column.writer.buffer) == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "spec, items",
+    [
+        ("Array(Dynamic)", [[1, "two", True]]),
+        ("Tuple(Dynamic, Dynamic)", [(1, "two")]),
+        ("Map(String, Dynamic)", [{"one": 1, "two": "two"}]),
+        ("Dynamic", [[[1, "two"]]]),
+    ],
+)
+async def test_nested_dynamic_writes_structure_before_data(spec, items):
+    column = get_column_by_spec(spec, _column_options())
+
+    column.prepare_state_prefix(items)
+    await column.write_state_prefix()
+    prefix_size = len(column.writer.buffer)
+    await column.write_data(items)
+
+    assert prefix_size > 0
+    assert bytes(column.writer.buffer[:8]) == DYNAMIC_SERIALIZATION_VERSION_V1.to_bytes(8, "little")
 
 
 @pytest.mark.asyncio

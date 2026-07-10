@@ -174,6 +174,10 @@ class ArrayColumn(Column):
         await super().write_state_prefix()
         await self.nested_column.write_state_prefix()
 
+    def prepare_state_prefix(self, items):
+        items = [item or [] for item in items]
+        self.nested_column.prepare_state_prefix(list(chain.from_iterable(items)))
+
     async def _read(
         self,
         size,

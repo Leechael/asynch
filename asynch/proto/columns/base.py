@@ -198,6 +198,9 @@ class Column:
     async def write_state_prefix(self):
         pass
 
+    def prepare_state_prefix(self, items):
+        pass
+
 
 class FormatColumn(Column):
     """
