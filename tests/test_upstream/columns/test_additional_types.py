@@ -31,6 +31,18 @@ async def test_bfloat16_roundtrip(conn):
     assert inserted == [(42.5,), (-1.25,)]
 
 
+async def test_nullable_and_array_bfloat16_roundtrip(conn):
+    if not await _has_type_family(conn, "BFloat16"):
+        pytest.skip("ClickHouse server does not expose BFloat16")
+
+    data = [(None, [1.0, 2.5]), (3.0, [])]
+    async with create_table(conn, "a Nullable(BFloat16), b Array(BFloat16)") as table:
+        await execute(conn, f"INSERT INTO {table} VALUES", data, types_check=True)
+        inserted = await execute(conn, f"SELECT * FROM {table}")
+
+    assert inserted == data
+
+
 async def test_time_and_time64_roundtrip(conn):
     if not await _has_type_family(conn, "Time"):
         pytest.skip("ClickHouse server does not expose Time")
@@ -53,6 +65,28 @@ async def test_time_and_time64_roundtrip(conn):
             timedelta(hours=1, minutes=2, seconds=3, milliseconds=456),
         )
     ]
+
+
+async def test_nullable_and_array_time_roundtrip(conn):
+    if not await _has_type_family(conn, "Time"):
+        pytest.skip("ClickHouse server does not expose Time")
+
+    settings = {"enable_time_time64_type": 1}
+    data = [(None, [time(1, 2, 3), time(4, 5, 6)])]
+    expected = [
+        (
+            None,
+            [
+                timedelta(hours=1, minutes=2, seconds=3),
+                timedelta(hours=4, minutes=5, seconds=6),
+            ],
+        )
+    ]
+    async with create_table(conn, "a Nullable(Time), b Array(Time)", settings=settings) as table:
+        await execute(conn, f"INSERT INTO {table} VALUES", data, settings=settings)
+        inserted = await execute(conn, f"SELECT * FROM {table}", settings=settings)
+
+    assert inserted == expected
 
 
 async def test_datetime32_roundtrip(conn):

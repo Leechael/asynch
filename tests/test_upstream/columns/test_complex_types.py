@@ -89,6 +89,89 @@ async def test_dynamic_mixed_block_roundtrip(conn):
     assert inserted == values
 
 
+@pytest.mark.parametrize(
+    ("column_type", "values", "expected"),
+    [
+        ("Array(Dynamic)", [([1, "x", True],)], [([1, "x", True],)]),
+        ("Tuple(Dynamic, Dynamic)", [((1, "x"),)], [((1, "x"),)]),
+        ("Map(String, Dynamic)", [({"a": 1, "b": "x"},)], [({"a": 1, "b": "x"},)]),
+    ],
+)
+async def test_dynamic_nested_roundtrip(conn, column_type, values, expected):
+    if not await _has_type_family(conn, "Dynamic"):
+        pytest.skip("ClickHouse server does not expose Dynamic")
+
+    async with create_table(conn, f"a {column_type}", settings=EXPERIMENTAL_SETTINGS) as table:
+        await execute(
+            conn,
+            f"INSERT INTO {table} VALUES",
+            values,
+            settings=EXPERIMENTAL_SETTINGS,
+        )
+        inserted = await execute(conn, f"SELECT * FROM {table}", settings=EXPERIMENTAL_SETTINGS)
+
+    assert inserted == expected
+
+
+async def test_array_variant_roundtrip(conn):
+    if not await _has_type_family(conn, "Variant"):
+        pytest.skip("ClickHouse server does not expose Variant")
+
+    values = [([("UInt8", 7), ("String", "seven")],)]
+    async with create_table(
+        conn,
+        "a Array(Variant(UInt8, String))",
+        settings=EXPERIMENTAL_SETTINGS,
+    ) as table:
+        await execute(
+            conn,
+            f"INSERT INTO {table} VALUES",
+            values,
+            settings=EXPERIMENTAL_SETTINGS,
+        )
+        inserted = await execute(conn, f"SELECT * FROM {table}", settings=EXPERIMENTAL_SETTINGS)
+
+    assert inserted == [([7, "seven"],)]
+
+
+async def test_array_json_roundtrip(conn):
+    if not await _has_type_family(conn, "JSON"):
+        pytest.skip("ClickHouse server does not expose JSON")
+
+    values = [([{"a": 1}, {"b": "x"}],)]
+    async with create_table(conn, "a Array(JSON)", settings=EXPERIMENTAL_SETTINGS) as table:
+        await execute(
+            conn,
+            f"INSERT INTO {table} VALUES",
+            values,
+            settings=EXPERIMENTAL_SETTINGS,
+        )
+        inserted = await execute(conn, f"SELECT * FROM {table}", settings=EXPERIMENTAL_SETTINGS)
+
+    assert inserted == values
+
+
+async def test_array_qbit_roundtrip(conn):
+    if not await _has_type_family(conn, "QBit"):
+        pytest.skip("ClickHouse server does not expose QBit")
+
+    values = [([[1.0, 2.0], [3.0, 4.0]],)]
+    async with create_table(
+        conn,
+        "a Array(QBit(Float32, 2))",
+        settings=EXPERIMENTAL_SETTINGS,
+    ) as table:
+        await execute(
+            conn,
+            f"INSERT INTO {table} VALUES",
+            values,
+            settings=EXPERIMENTAL_SETTINGS,
+        )
+        inserted = await execute(conn, f"SELECT * FROM {table}", settings=EXPERIMENTAL_SETTINGS)
+
+    assert inserted == values
+
+
 async def test_geometry_roundtrip(conn):
     if not await _has_type_family(conn, "Geometry"):
         pytest.skip("ClickHouse server does not expose Geometry")
