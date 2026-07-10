@@ -1,5 +1,7 @@
+import asyncio
 import datetime
 import inspect
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -151,3 +153,16 @@ async def test_dict_cursor_no_result_set_raises_programming_error():
     assert cursor.description is None
     with pytest.raises(ProgrammingError):
         await cursor.fetchall()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["execute", "executemany"])
+async def test_cancelled_cursor_operation_leaves_cursor_reusable(method):
+    conn = Connection()
+    conn._connection.execute = AsyncMock(side_effect=asyncio.CancelledError)
+    cursor = conn.cursor()
+
+    with pytest.raises(asyncio.CancelledError):
+        await getattr(cursor, method)("SELECT 1")
+
+    assert cursor.status == "finished"

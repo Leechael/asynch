@@ -452,10 +452,14 @@ class Connection:
 
             await self.writer.write_varint(ClientPacket.PING)
             await self.writer.flush()
-            packet_type = await self.reader.read_varint()
+            packet_type = await asyncio.wait_for(
+                self.reader.read_varint(), timeout=self.sync_request_timeout
+            )
             while packet_type == ServerPacket.PROGRESS:
                 await self.receive_progress()
-                packet_type = await self.reader.read_varint()
+                packet_type = await asyncio.wait_for(
+                    self.reader.read_varint(), timeout=self.sync_request_timeout
+                )
             if packet_type != ServerPacket.PONG:
                 msg = self.unexpected_packet_message("Pong", packet_type)
                 raise UnexpectedPacketFromServerError(msg)
@@ -469,6 +473,9 @@ class Connection:
                 "we believe that the connection is incorrect.",
                 exc_info=e,
             )
+        except asyncio.TimeoutError as e:
+            logger.debug("Ping timed out", exc_info=e)
+            await self.disconnect()
         except (ConnectionError, OSError, RuntimeError) as e:
             # If raised RuntimeError with "TCPTransport the handler is closed" - just returning false,
             # because this is a connection loss case
@@ -585,6 +592,11 @@ class Connection:
             return True
 
     async def _receive_packet(self):
+        return await asyncio.wait_for(
+            self._receive_packet_impl(), timeout=self.send_receive_timeout
+        )
+
+    async def _receive_packet_impl(self):
         packet = Packet()
 
         packet.type = packet_type = await self.reader.read_varint()
@@ -671,7 +683,7 @@ class Connection:
                     continue
 
                 yield packet
-        except (Exception, KeyboardInterrupt):
+        except (Exception, asyncio.CancelledError, KeyboardInterrupt):
             await self.disconnect()
             raise
 
