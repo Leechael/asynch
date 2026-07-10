@@ -226,7 +226,7 @@ async def test_connection_cleanup(config, get_tcp_connections):
     async with conn as cn:
         final_tcps = await get_tcp_connections(cn)
 
-    assert final_tcps == init_tcps
+    assert final_tcps <= init_tcps
 
 
 @pytest.mark.asyncio

@@ -6,7 +6,7 @@ import pytest
 from asynch.proto.columns import get_column_by_spec
 from asynch.proto.columns.aggregatefunctioncolumn import AggregateFunctionColumn
 from asynch.proto.columns.dynamiccolumn import DYNAMIC_SERIALIZATION_VERSION_V1, DynamicColumn
-from asynch.proto.columns.jsoncolumn import JsonColumn, LegacyJsonColumn
+from asynch.proto.columns.jsoncolumn import JsonColumn
 from asynch.proto.columns.qbitcolumn import QBitColumn
 from asynch.proto.columns.variantcolumn import VariantColumn
 from asynch.proto.streams.buffered import BufferedWriter
@@ -49,13 +49,23 @@ def test_complex_type_families_parse(spec, expected_type):
     assert isinstance(column, expected_type)
 
 
-def test_json_uses_legacy_serialization_before_revision_54473():
+@pytest.mark.asyncio
+async def test_json_uses_legacy_serialization_before_revision_54473():
     options = _column_options()
-    options["context"].server_info.used_revision = 54469
-
+    options["context"].server_info.revision = 54469
     column = get_column_by_spec("JSON", options)
+    items = [{"user": {"name": "Ada"}, "score": 10}]
 
-    assert isinstance(column, LegacyJsonColumn)
+    column.prepare_state_prefix(items)
+    await column.write_state_prefix()
+    prefix_size = len(column.writer.buffer)
+    await column.write_data(items)
+
+    assert isinstance(column, JsonColumn)
+    assert column.write_mode == 0
+    assert bytes(column.writer.buffer[:8]) == bytes(8)
+    assert b"user.name" in column.writer.buffer[:prefix_size]
+    assert len(column.writer.buffer) > prefix_size
 
 
 @pytest.mark.asyncio
