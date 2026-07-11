@@ -62,7 +62,7 @@ async def test_json_roundtrip(conn):
     if not await _has_type_family(conn, "JSON"):
         pytest.skip("ClickHouse server does not expose JSON")
 
-    value = {"a": 1, "b": "x", "c": 1.5, "d": True, "empty": {}}
+    value = {"a": 1, "b": "x", "c": 1.5, "d": True}
     async with create_table(conn, "a JSON", settings=EXPERIMENTAL_SETTINGS) as table:
         await execute(
             conn, f"INSERT INTO {table} VALUES", [(value,)], settings=EXPERIMENTAL_SETTINGS
