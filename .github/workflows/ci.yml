@@ -140,6 +140,8 @@ jobs:
           git -C /tmp/clickhouse-sqlalchemy checkout FETCH_HEAD
           sed -i 's/except DeprecationWarning:/except (DeprecationWarning, RuntimeError):/' \
             /tmp/clickhouse-sqlalchemy/tests/util.py
+          grep -Fq 'except (DeprecationWarning, RuntimeError):' \
+            /tmp/clickhouse-sqlalchemy/tests/util.py
           python -m pip install --no-deps /tmp/clickhouse-sqlalchemy
           python -m pip install "SQLAlchemy>=2.0,<2.1" requests clickhouse-driver \
             pytest pytest-asyncio pytest-timeout greenlet alembic responses parameterized

@@ -10,7 +10,7 @@ from asynch.errors import ChecksumDoesntMatchError
 from asynch.proto.compression import import_cityhash
 from asynch.proto.compression.lz4 import Compressor as LZ4Compressor
 from asynch.proto.connection import Connection as ProtoConnection
-from asynch.proto.protocol import ClientPacket, CompressionMethodByte
+from asynch.proto.protocol import ClientPacket, CompressionMethodByte, ServerPacket
 from asynch.proto.streams.buffered import (
     BufferedReader,
     BufferedWriter,
@@ -63,6 +63,26 @@ async def test_ping_honors_sync_request_timeout():
         await asyncio.sleep(1)
 
     conn.reader.read_varint = never_returns
+    conn.writer = Mock()
+    conn.writer.write_varint = AsyncMock()
+    conn.writer.flush = AsyncMock()
+    conn.writer.close = AsyncMock()
+
+    assert await conn.ping() is False
+    assert conn.connected is False
+
+
+async def test_ping_timeout_covers_progress_payload():
+    conn = ProtoConnection(sync_request_timeout=0.001)
+    conn.connected = True
+    conn.reader = Mock()
+    conn.reader.reader.at_eof.return_value = False
+    conn.reader.read_varint = AsyncMock(return_value=ServerPacket.PROGRESS)
+
+    async def never_returns():
+        await asyncio.sleep(1)
+
+    conn.receive_progress = never_returns
     conn.writer = Mock()
     conn.writer.write_varint = AsyncMock()
     conn.writer.flush = AsyncMock()

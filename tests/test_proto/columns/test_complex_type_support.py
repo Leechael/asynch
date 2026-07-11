@@ -86,6 +86,21 @@ async def test_json_uses_legacy_serialization_before_revision_54473():
 
 
 @pytest.mark.asyncio
+async def test_legacy_json_preserves_nested_empty_objects():
+    options = _column_options()
+    options["context"].server_info.revision = 54469
+    column = get_column_by_spec("JSON", options)
+    items = [{"nested": {}}]
+
+    column.prepare_state_prefix(items)
+    await column.write_state_prefix()
+    await column.write_data(items)
+
+    assert column.dynamic_paths == ["nested"]
+    assert column.dynamic_columns[0]._dynamic_specs == ["JSON"]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "spec, items, expected",
     [

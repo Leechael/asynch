@@ -168,7 +168,7 @@ def _flatten_json(value, prefix=""):
     flattened = {}
     for key, item in value.items():
         path = f"{prefix}.{key}" if prefix else key
-        if isinstance(item, dict):
+        if isinstance(item, dict) and item:
             flattened.update(_flatten_json(item, path))
         else:
             flattened[path] = item

@@ -1,6 +1,9 @@
 name: compat-nightly
 
 on:
+  pull_request:
+    branches:
+      - clickhouse-driver-compact
   schedule:
     - cron: "0 17 * * *"
   workflow_dispatch:
