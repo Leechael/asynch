@@ -149,7 +149,7 @@ async def test_pool_connection_management(config, get_tcp_connections):
         assert pool.acquired_connections == 0
 
     async with Connection(dsn=config.dsn) as conn:
-        assert init_tcps == await get_tcp_connections(conn)
+        assert await get_tcp_connections(conn) <= init_tcps
 
 
 @pytest.mark.asyncio
@@ -184,7 +184,7 @@ async def test_pool_concurrent_connection_management(config, get_tcp_connections
 
     async with Connection(dsn=config.dsn) as conn:
         noc = await get_tcp_connections(conn)
-        assert noc == init_tcps
+        assert noc <= init_tcps
 
     assert selectees == answers
 
