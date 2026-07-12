@@ -132,6 +132,7 @@ class Connection:
         sync_request_timeout: int = constants.DBMS_DEFAULT_SYNC_REQUEST_TIMEOUT_SEC,
         compress_block_size: int = constants.DEFAULT_COMPRESS_BLOCK_SIZE,
         compression: Union[bool, str] = False,
+        buffer_size: Optional[int] = None,
         secure: bool = False,
         # Secure socket parameters.
         verify: bool = True,
@@ -155,6 +156,7 @@ class Connection:
     ):
         self.stack_track = stack_track
         self.metrics_enabled = self._resolve_metrics_enabled(metrics)
+        self.buffer_size = self._resolve_buffer_size(buffer_size)
         self._metrics_query_sent_at = None
         if secure:
             default_port = constants.DEFAULT_SECURE_PORT
@@ -267,6 +269,20 @@ class Connection:
             return metrics
         return os.environ.get(METRICS_ENV, "").lower() in _METRICS_TRUE_VALUES
 
+    @staticmethod
+    def _resolve_buffer_size(buffer_size: Optional[int]) -> int:
+        if buffer_size is None:
+            buffer_size = os.environ.get(constants.BUFFER_SIZE_ENV, constants.BUFFER_SIZE)
+        if isinstance(buffer_size, bool):
+            raise ValueError("buffer_size must be a positive integer")
+        try:
+            buffer_size = int(buffer_size)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("buffer_size must be a positive integer") from exc
+        if buffer_size <= 0:
+            raise ValueError("buffer_size must be a positive integer")
+        return buffer_size
+
     def reset_last_query(self):
         self.last_query = None
 
@@ -278,6 +294,7 @@ class Connection:
                 self.reader,
                 self.writer,
                 self.context,
+                self.buffer_size,
             )
         else:
             from asynch.proto.streams.block import BlockReader
@@ -295,6 +312,7 @@ class Connection:
                 self.context,
                 compressor,
                 self.compress_block_size,
+                self.buffer_size,
             )
         else:
             from .streams.block import BlockWriter
@@ -576,7 +594,11 @@ class Connection:
             and self.server_info.used_revision
             >= constants.DBMS_MIN_REVISION_WITH_COMPRESSED_LOGS_PROFILE_EVENTS_COLUMNS
         ):
-            reader = CompressedBufferedReader(self.reader, self.reader.reader)
+            reader = CompressedBufferedReader(
+                self.reader,
+                self.reader.reader,
+                self.buffer_size,
+            )
         return [await reader.read_str() for _i in range(num)]
 
     async def receive_part_uuids(self):
@@ -871,9 +893,10 @@ class Connection:
             sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             if self.tcp_keepalive:
                 self._set_keepalive(sock)
-        self.writer = BufferedWriter(writer)
+        self.writer = BufferedWriter(writer, self.buffer_size)
         self.reader = BufferedReader(
             reader,
+            self.buffer_size,
             metrics=ReaderMetrics() if self.metrics_enabled else None,
         )
         self.block_reader = self.get_block_reader()

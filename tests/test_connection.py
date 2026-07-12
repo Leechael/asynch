@@ -135,6 +135,11 @@ def test_connection_status_offline():
 
 
 @pytest.mark.no_clickhouse
+def test_connection_passes_buffer_size_to_protocol_connection():
+    assert Connection(buffer_size=512)._connection.buffer_size == 512
+
+
+@pytest.mark.no_clickhouse
 def test_connection_exposes_last_query():
     conn = Connection()
     last_query = object()

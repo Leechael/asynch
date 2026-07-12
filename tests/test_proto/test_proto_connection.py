@@ -196,6 +196,52 @@ def test_metrics_environment_enablement(monkeypatch, environment, expected):
 
 
 @pytest.mark.no_clickhouse
+@pytest.mark.parametrize("buffer_size", [0, -1, True, "not-an-integer"])
+def test_buffer_size_rejects_invalid_values(buffer_size):
+    with pytest.raises(ValueError, match="buffer_size"):
+        ProtoConnection(buffer_size=buffer_size)
+
+
+@pytest.mark.no_clickhouse
+def test_buffer_size_uses_environment_when_kwarg_is_omitted(monkeypatch):
+    monkeypatch.setenv("ASYNCH_BUFFER_SIZE", "4096")
+
+    assert ProtoConnection().buffer_size == 4096
+    assert ProtoConnection(buffer_size=512).buffer_size == 512
+
+
+@pytest.mark.no_clickhouse
+@pytest.mark.parametrize("environment", ["0", "-1", "not-an-integer"])
+def test_buffer_size_rejects_invalid_environment(monkeypatch, environment):
+    monkeypatch.setenv("ASYNCH_BUFFER_SIZE", environment)
+
+    with pytest.raises(ValueError, match="buffer_size"):
+        ProtoConnection()
+
+
+@pytest.mark.no_clickhouse
+async def test_buffer_size_flows_to_all_connection_streams():
+    conn = ProtoConnection(compression=True, buffer_size=256)
+    conn.server_info = Mock(used_revision=0)
+    stream_reader = asyncio.StreamReader()
+    stream_writer = Mock()
+    stream_writer.get_extra_info.return_value = None
+    conn.send_hello = AsyncMock()
+    conn.receive_hello = AsyncMock()
+
+    with patch(
+        "asynch.proto.connection.asyncio.open_connection",
+        new=AsyncMock(return_value=(stream_reader, stream_writer)),
+    ):
+        await conn._init_connection("localhost", 9000)
+
+    assert conn.reader.buffer_max_size == 256
+    assert conn.writer.max_buffer_size == 256
+    assert conn.block_reader.reader.buffer_max_size == 256
+    assert conn.block_writer.writer.max_buffer_size == 256
+
+
+@pytest.mark.no_clickhouse
 async def test_receive_data_records_client_timings():
     conn = ProtoConnection(metrics=True)
     reader_metrics = ReaderMetrics()
