@@ -295,8 +295,10 @@ class Pool:
         if not n:
             return
 
-        tasks = [asyncio.create_task(self._new_connection()) for _ in range(n)]
+        tasks: list[asyncio.Future[Connection]] = []
         try:
+            for _ in range(n):
+                tasks.append(asyncio.create_task(self._new_connection()))
             results = await asyncio.gather(*tasks, return_exceptions=True)
         except BaseException:
             for task in tasks:

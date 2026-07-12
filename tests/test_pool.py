@@ -280,6 +280,38 @@ async def test_cancelled_startup_discards_connections_that_finished_first():
 
 @pytest.mark.no_clickhouse
 @pytest.mark.asyncio
+async def test_failed_task_creation_releases_initialization_reservation(monkeypatch):
+    pool = Pool(minsize=0, maxsize=2)
+    first = Connection()
+    first._connection.connected = True
+    first.close = AsyncMock()
+    pool._new_connection = AsyncMock(return_value=first)
+    real_create_task = asyncio.create_task
+    created_tasks = 0
+    completed_task = asyncio.get_running_loop().create_future()
+    completed_task.set_result(first)
+
+    def fail_on_second_task(coro):
+        nonlocal created_tasks
+        created_tasks += 1
+        if created_tasks == 1:
+            coro.close()
+            return completed_task
+        if created_tasks == 2:
+            coro.close()
+            raise RuntimeError("task factory failed")
+        return real_create_task(coro)
+
+    monkeypatch.setattr(asyncio, "create_task", fail_on_second_task)
+
+    with pytest.raises(RuntimeError, match="task factory failed"):
+        await pool._init_connections(2, strict=True)
+    assert pool._pending_connections == 0
+    first.close.assert_awaited_once()
+
+
+@pytest.mark.no_clickhouse
+@pytest.mark.asyncio
 async def test_shutdown_wins_over_an_inflight_startup():
     pool = Pool(minsize=1, maxsize=1)
     entered_connect = asyncio.Event()
