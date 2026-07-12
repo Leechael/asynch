@@ -295,13 +295,18 @@ class Pool:
         if not n:
             return
 
+        tasks = [asyncio.create_task(self._new_connection()) for _ in range(n)]
         try:
-            results = await asyncio.gather(
-                *(self._new_connection() for _ in range(n)), return_exceptions=True
-            )
+            results = await asyncio.gather(*tasks, return_exceptions=True)
         except BaseException:
+            for task in tasks:
+                task.cancel()
+            cancelled_results = await asyncio.gather(*tasks, return_exceptions=True)
+            connections = [result for result in cancelled_results if isinstance(result, Connection)]
             async with self._lock:
                 self._finish_connection_reservation(n)
+            for conn in connections:
+                await self._discard_connection(conn)
             raise
         connections = [result for result in results if isinstance(result, Connection)]
         failures = [result for result in results if isinstance(result, Exception)]

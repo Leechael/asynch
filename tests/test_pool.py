@@ -253,6 +253,33 @@ async def test_cancelled_startup_unblocks_later_startup_calls():
 
 @pytest.mark.no_clickhouse
 @pytest.mark.asyncio
+async def test_cancelled_startup_discards_connections_that_finished_first():
+    pool = Pool(minsize=2, maxsize=2)
+    entered_second_connect = asyncio.Event()
+    first = Connection()
+    first._connection.connected = True
+    first.close = AsyncMock()
+
+    async def staggered_connection():
+        if not entered_second_connect.is_set():
+            entered_second_connect.set()
+            return first
+        await asyncio.Event().wait()
+
+    pool._new_connection = staggered_connection
+    startup = asyncio.create_task(pool.startup())
+    await entered_second_connect.wait()
+    await asyncio.sleep(0)
+    startup.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await startup
+    assert pool._pending_connections == 0
+    first.close.assert_awaited_once()
+
+
+@pytest.mark.no_clickhouse
+@pytest.mark.asyncio
 async def test_shutdown_wins_over_an_inflight_startup():
     pool = Pool(minsize=1, maxsize=1)
     entered_connect = asyncio.Event()
