@@ -135,6 +135,24 @@ def test_connection_status_offline():
 
 
 @pytest.mark.no_clickhouse
+def test_connection_exposes_last_query():
+    conn = Connection()
+    last_query = object()
+    conn._connection.last_query = last_query
+
+    assert conn.last_query is last_query
+
+
+@pytest.mark.no_clickhouse
+def test_connection_exposes_read_only_settings():
+    conn = Connection(settings={"max_threads": 2})
+
+    assert dict(conn.settings) == {"max_threads": 2}
+    with pytest.raises(TypeError):
+        conn.settings["max_threads"] = 4
+
+
+@pytest.mark.no_clickhouse
 def test_connection_wire_liveness_contract_inv_s1_s2_s5():
     conn = Connection()
     conn._opened = True
