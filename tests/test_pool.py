@@ -380,9 +380,9 @@ async def test_pool_broken_connection_handling(config):
             assert pool.free_connections == 0
             assert pool.acquired_connections == 1
 
-        # when leaving the connection context,
-        # the pool should ensure its consistency
-        assert pool.free_connections == 1
+        # Returning a dead connection drops it without a lock-held reconnect.
+        # The next checkout replenishes the temporarily empty pool lazily.
+        assert pool.free_connections == 0
         assert pool.acquired_connections == 0
 
         async with pool.connection() as conn:
