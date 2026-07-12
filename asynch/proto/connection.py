@@ -1046,14 +1046,7 @@ class Connection:
         query_settings.update(settings)
         self.context.settings = query_settings
 
-    async def check_query_execution(self):
-        async with self._lock:
-            if self.is_query_executing:
-                raise PartiallyConsumedQueryError()
-
-            self.is_query_executing = True
-
-    async def force_connect(self):
+    async def force_connect(self, settings=None):
         async with self._lock:
             if self.is_query_executing:
                 raise PartiallyConsumedQueryError()
@@ -1067,6 +1060,7 @@ class Connection:
                 logger.info("Connection was closed, reconnecting.")
                 await self.connect()
 
+            self.make_query_settings(settings)
             self.is_query_executing = True
 
     async def process_ordinary_query(

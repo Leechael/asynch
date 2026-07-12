@@ -45,11 +45,10 @@ class ExecuteContext:
         self._query = query
         self._settings = settings
         self._connection = connection
-        self._connection.make_query_settings(settings)
 
     async def __aenter__(self):
         try:
-            await self._connection.force_connect()
+            await self._connection.force_connect(self._settings)
             self._connection.last_query = QueryInfo(self._connection.reader)
         except PartiallyConsumedQueryError:
             raise

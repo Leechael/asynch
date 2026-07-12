@@ -6,10 +6,15 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from asynch.errors import ChecksumDoesntMatchError, SocketTimeoutError
+from asynch.errors import (
+    ChecksumDoesntMatchError,
+    PartiallyConsumedQueryError,
+    SocketTimeoutError,
+)
 from asynch.proto.compression import import_cityhash
 from asynch.proto.compression.lz4 import Compressor as LZ4Compressor
 from asynch.proto.connection import Connection as ProtoConnection
+from asynch.proto.context import ExecuteContext
 from asynch.proto.protocol import ClientPacket, CompressionMethodByte, ServerPacket
 from asynch.proto.streams.buffered import (
     BufferedReader,
@@ -33,6 +38,35 @@ async def test_force_connect_probes_before_starting_query():
     await conn.force_connect()
 
     assert conn.is_query_executing is True
+
+
+async def test_concurrent_execute_does_not_overwrite_reserved_query_settings():
+    conn = ProtoConnection()
+    connect_started = asyncio.Event()
+    finish_connect = asyncio.Event()
+
+    async def connect():
+        connect_started.set()
+        await finish_connect.wait()
+        conn.connected = True
+
+    conn.connect = connect
+
+    async def reserve_first_query():
+        context = ExecuteContext(conn, "SELECT 1", {"max_threads": 1})
+        await context.__aenter__()
+        return conn.context.settings
+
+    async def reject_second_query():
+        await connect_started.wait()
+        context = ExecuteContext(conn, "SELECT 2", {"max_threads": 2})
+        finish_connect.set()
+        with pytest.raises(PartiallyConsumedQueryError):
+            await context.__aenter__()
+
+    first_query_settings, _ = await asyncio.gather(reserve_first_query(), reject_second_query())
+
+    assert first_query_settings["max_threads"] == 1
 
 
 async def test_send_cancel_writes_cancel_packet():
