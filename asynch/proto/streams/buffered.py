@@ -1,5 +1,6 @@
 import struct
 from asyncio import StreamReader, StreamWriter
+from time import perf_counter
 
 import leb128
 
@@ -9,6 +10,15 @@ from asynch.proto.compression import BaseCompressor, get_decompressor_cls
 
 MAX_UINT64 = (1 << 64) - 1
 MAX_INT64 = (1 << 63) - 1
+
+
+class ReaderMetrics:
+    __slots__ = ("network_wait", "socket_reads", "bytes_read")
+
+    def __init__(self):
+        self.network_wait = 0.0
+        self.socket_reads = 0
+        self.bytes_read = 0
 
 
 class BufferedWriter:
@@ -101,9 +111,15 @@ class BufferedWriter:
 
 
 class BufferedReader:
-    def __init__(self, reader: StreamReader, buffer_max_size: int = constants.BUFFER_SIZE):
+    def __init__(
+        self,
+        reader: StreamReader,
+        buffer_max_size: int = constants.BUFFER_SIZE,
+        metrics: ReaderMetrics = None,
+    ):
         self.buffer_max_size = buffer_max_size
         self.reader = reader
+        self.metrics = metrics
         self.buffer = bytearray()
         self.current_buffer_size = 0
         self.position = 0
@@ -128,7 +144,14 @@ class BufferedReader:
         self.current_buffer_size = 0
 
     async def _read_into_buffer(self):
-        packet = await self.reader.read(self.buffer_max_size)
+        if self.metrics is None:
+            packet = await self.reader.read(self.buffer_max_size)
+        else:
+            start_time = perf_counter()
+            packet = await self.reader.read(self.buffer_max_size)
+            self.metrics.network_wait += perf_counter() - start_time
+            self.metrics.socket_reads += 1
+            self.metrics.bytes_read += len(packet)
         self.buffer.extend(packet)
         self.current_buffer_size = len(self.buffer)
 
