@@ -88,8 +88,18 @@ class Connection:
         return self._closed
 
     @property
+    def connected(self) -> Optional[bool]:
+        return self._connection.connected
+
+    @property
+    def is_query_executing(self) -> bool:
+        return self._connection.is_query_executing
+
+    @property
     def status(self) -> str:
         """Return the status of the connection.
+
+        Closed means the user closed the connection or the wire disconnected.
 
         :raise ConnectionError: an unresolved connection state
         :return: the Connection object status
@@ -99,7 +109,9 @@ class Connection:
         if not (self._opened or self._closed):
             return ConnectionStatus.created.value
         if self._opened and not self._closed:
-            return ConnectionStatus.opened.value
+            return (
+                ConnectionStatus.opened.value if self.connected else ConnectionStatus.closed.value
+            )
         if self._closed and not self._opened:
             return ConnectionStatus.closed.value
         raise ConnectionError(f"{self} is in an unknown state")
@@ -142,7 +154,7 @@ class Connection:
         return None
 
     async def connect(self) -> None:
-        if self._opened:
+        if self.connected:
             return
         await self._connection.connect()
         self._opened = True

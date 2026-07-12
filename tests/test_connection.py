@@ -1,8 +1,10 @@
 import ssl
+from unittest.mock import AsyncMock
 
 import pytest
 
 from asynch.connection import Connection
+from asynch.proto.models.enums import ConnectionStatus
 
 HOST = "192.168.15.103"
 PORT = 10000
@@ -130,6 +132,31 @@ def test_connection_status_offline():
     assert repr(conn) == repstr
     assert not conn.opened
     assert not conn.closed
+
+
+@pytest.mark.no_clickhouse
+def test_connection_wire_liveness_contract_inv_s1_s2_s5():
+    conn = Connection()
+    conn._opened = True
+    conn._connection.connected = False
+    conn._connection.is_query_executing = True
+
+    assert conn.connected is False
+    assert conn.is_query_executing is True
+    assert conn.status == ConnectionStatus.closed
+
+
+@pytest.mark.no_clickhouse
+@pytest.mark.asyncio
+async def test_connect_rebuilds_wire_dead_connection_inv_s4():
+    conn = Connection()
+    conn._opened = True
+    conn._connection.connected = False
+    conn._connection.connect = AsyncMock()
+
+    await conn.connect()
+
+    conn._connection.connect.assert_awaited_once()
 
 
 @pytest.mark.asyncio
