@@ -25,6 +25,11 @@ on:
         required: false
         default: "1000000"
         type: string
+      pool_only:
+        description: Run only the B/D pool benchmark matrices
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
