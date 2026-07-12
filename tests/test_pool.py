@@ -8,6 +8,7 @@ from asynch.connection import Connection
 from asynch.errors import AsynchPoolError
 from asynch.pool import Pool
 from asynch.proto import constants
+from asynch.proto.connection import METRICS_ENV
 
 
 def _get_pool_size(pool: Pool) -> int:
@@ -40,6 +41,35 @@ async def test_release_reconnects_poisoned_connection_inv_s7():
     assert pool.free_connections == 1
     assert conn.connected is True
     assert conn.is_query_executing is False
+
+
+@pytest.mark.no_clickhouse
+@pytest.mark.parametrize(
+    ("environment", "expected"),
+    [("1", True), ("true", True), ("ON", True), ("0", False)],
+)
+def test_pool_metrics_environment_enablement(monkeypatch, environment, expected):
+    monkeypatch.setenv(METRICS_ENV, environment)
+
+    assert (Pool().metrics is not None) is expected
+    assert (Pool(metrics=not expected).metrics is not None) is not expected
+
+
+@pytest.mark.no_clickhouse
+async def test_pool_metrics_record_acquisition_wait():
+    pool = Pool(minsize=0, maxsize=1, metrics=True)
+    conn = Connection()
+    pool._acquire_connection = AsyncMock(return_value=conn)
+    pool._release_connection = AsyncMock()
+    pool._ensure_minsize_connections = AsyncMock()
+
+    async with pool.connection() as acquired:
+        assert acquired is conn
+
+    assert pool.metrics is not None
+    assert pool.metrics.acquisitions == 1
+    assert pool.metrics.acquire_wait_total >= 0
+    assert pool.metrics.acquire_wait_max == pool.metrics.acquire_wait_total
 
 
 @pytest.mark.asyncio
