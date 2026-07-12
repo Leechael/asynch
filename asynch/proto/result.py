@@ -1,8 +1,22 @@
 from collections.abc import AsyncGenerator
+from typing import Optional
 
 from asynch.proto.block import BlockStreamProfileInfo
 from asynch.proto.progress import Progress
 from asynch.proto.streams.buffered import BufferedReader
+
+
+class ClientTimings:
+    def __init__(self):
+        self.network_wait = 0.0
+        self.decode = 0.0
+        self.decompress = 0.0
+        self.max_block_decode = 0.0
+        self.ttfb = 0.0
+        self.blocks = 0
+        self.rows = 0
+        self.bytes_compressed = 0
+        self.bytes_raw = 0
 
 
 class QueryResult:
@@ -185,10 +199,15 @@ class IterQueryResult:
 
 
 class QueryInfo:
-    def __init__(self, reader: BufferedReader):
+    def __init__(
+        self,
+        reader: BufferedReader,
+        client_timings: Optional[ClientTimings] = None,
+    ):
         self.profile_info = BlockStreamProfileInfo(reader)
         self.progress = Progress(reader)
         self.elapsed = 0
+        self.client_timings = client_timings
 
     def store_profile(self, profile_info):
         self.profile_info = profile_info

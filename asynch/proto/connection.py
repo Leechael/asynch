@@ -7,7 +7,7 @@ import ssl
 import warnings
 from collections.abc import AsyncGenerator
 from sys import platform
-from time import time
+from time import perf_counter, time
 from types import GeneratorType
 from typing import Any, Iterable, Mapping, Optional, Union
 from urllib.parse import urlparse
@@ -46,12 +46,15 @@ from asynch.proto.streams.buffered import (
     BufferedReader,
     BufferedWriter,
     CompressedBufferedReader,
+    ReaderMetrics,
 )
 from asynch.proto.utils.escape import escape_params
 from asynch.proto.utils.helpers import chunks, column_chunks
 
 logger = logging.getLogger(__name__)
+metrics_logger = logging.getLogger("asynch.metrics")
 
+METRICS_ENV = "ASYNCH_METRICS"
 SUBSTITUTE_PARAMS_STYLE_ENV = "ASYNCH_SUBSTITUTE_PARAMS_STYLE"
 SUBSTITUTE_PARAMS_STYLE_FORMAT = "format"
 SUBSTITUTE_PARAMS_STYLE_PYFORMAT = "pyformat"
@@ -63,6 +66,15 @@ _SUBSTITUTE_PARAMS_STYLE_ALIASES = {
     "percent": SUBSTITUTE_PARAMS_STYLE_PYFORMAT,
     "pyformat": SUBSTITUTE_PARAMS_STYLE_PYFORMAT,
 }
+_METRICS_TRUE_VALUES = {"1", "true", "on"}
+
+
+def resolve_metrics_enabled(metrics: Optional[bool]) -> bool:
+    if metrics is not None:
+        return metrics
+    return os.environ.get(METRICS_ENV, "").lower() in _METRICS_TRUE_VALUES
+
+
 _INSERT_VALUES_PLACEHOLDER_RE = re.compile(
     r"""
     \A(?P<prefix>\s*INSERT\b.*\bVALUES)\s*
@@ -144,9 +156,14 @@ class Connection:
         disable_reconnect=False,
         stack_track=False,
         settings_is_important=False,
+        metrics: Optional[bool] = None,
+        buffer_size: Optional[int] = None,
         **kwargs,
     ):
         self.stack_track = stack_track
+        self.metrics_enabled = self._resolve_metrics_enabled(metrics)
+        self.buffer_size = self._resolve_buffer_size(buffer_size)
+        self._metrics_query_sent_at = None
         if secure:
             default_port = constants.DEFAULT_SECURE_PORT
         else:
@@ -252,6 +269,24 @@ class Connection:
         self.context.settings = self.settings
         self.context.client_settings = self.client_settings
 
+    @staticmethod
+    def _resolve_metrics_enabled(metrics: Optional[bool]) -> bool:
+        return resolve_metrics_enabled(metrics)
+
+    @staticmethod
+    def _resolve_buffer_size(buffer_size: Optional[int]) -> int:
+        if buffer_size is None:
+            buffer_size = os.environ.get(constants.BUFFER_SIZE_ENV, constants.BUFFER_SIZE)
+        if isinstance(buffer_size, bool):
+            raise ValueError("buffer_size must be a positive integer")
+        try:
+            buffer_size = int(buffer_size)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("buffer_size must be a positive integer") from exc
+        if buffer_size <= 0:
+            raise ValueError("buffer_size must be a positive integer")
+        return buffer_size
+
     def reset_last_query(self):
         self.last_query = None
 
@@ -263,6 +298,7 @@ class Connection:
                 self.reader,
                 self.writer,
                 self.context,
+                self.buffer_size,
             )
         else:
             from asynch.proto.streams.block import BlockReader
@@ -280,6 +316,7 @@ class Connection:
                 self.context,
                 compressor,
                 self.compress_block_size,
+                self.buffer_size,
             )
         else:
             from .streams.block import BlockWriter
@@ -491,11 +528,38 @@ class Connection:
             logger.debug("Socket closed", exc_info=e)
         return False
 
-    async def receive_data(self, raw=False):
+    async def receive_data(self, raw=False, metrics_baseline=None):
         revision = self.server_info.used_revision
+        block_reader = self.block_reader_raw if raw else self.block_reader
+        client_timings = self.last_query.client_timings if self.last_query is not None else None
+        if client_timings is None:
+            if revision >= constants.DBMS_MIN_REVISION_WITH_TEMPORARY_TABLES:
+                await self.reader.read_str()
+            return await block_reader.read()
+
+        reader_metrics = self.reader.metrics
+        if metrics_baseline is None:
+            start_time = perf_counter()
+            network_wait_before = reader_metrics.network_wait
+            bytes_read_before = reader_metrics.bytes_read
+        else:
+            start_time, network_wait_before, bytes_read_before = metrics_baseline
         if revision >= constants.DBMS_MIN_REVISION_WITH_TEMPORARY_TABLES:
             await self.reader.read_str()
-        return await (self.block_reader_raw if raw else self.block_reader).read()
+        if self.compression and not raw:
+            block_reader.reader.timings = client_timings
+
+        block = await block_reader.read()
+        network_wait = reader_metrics.network_wait - network_wait_before
+        decode = max(perf_counter() - start_time - network_wait, 0.0)
+        client_timings.network_wait += network_wait
+        client_timings.decode += decode
+        client_timings.max_block_decode = max(client_timings.max_block_decode, decode)
+        client_timings.blocks += 1
+        client_timings.rows += block.num_rows
+        if not self.compression:
+            client_timings.bytes_raw += reader_metrics.bytes_read - bytes_read_before
+        return block
 
     async def receive_exception(self):
         return await self.read_exception()
@@ -538,7 +602,11 @@ class Connection:
             and self.server_info.used_revision
             >= constants.DBMS_MIN_REVISION_WITH_COMPRESSED_LOGS_PROFILE_EVENTS_COLUMNS
         ):
-            reader = CompressedBufferedReader(self.reader, self.reader.reader)
+            reader = CompressedBufferedReader(
+                self.reader,
+                self.reader.reader,
+                self.buffer_size,
+            )
         return [await reader.read_str() for _i in range(num)]
 
     async def receive_part_uuids(self):
@@ -612,11 +680,23 @@ class Connection:
 
     async def _receive_packet_impl(self):
         packet = Packet()
+        client_timings = self.last_query.client_timings if self.last_query is not None else None
+        metrics_baseline = None
+        if client_timings is not None:
+            reader_metrics = self.reader.metrics
+            metrics_baseline = (
+                perf_counter(),
+                reader_metrics.network_wait,
+                reader_metrics.bytes_read,
+            )
 
         packet.type = packet_type = await self.reader.read_varint()
 
         if packet_type == ServerPacket.DATA:
-            packet.block = await self.receive_data()
+            if self._metrics_query_sent_at is not None:
+                self.last_query.client_timings.ttfb = perf_counter() - self._metrics_query_sent_at
+                self._metrics_query_sent_at = None
+            packet.block = await self.receive_data(metrics_baseline=metrics_baseline)
 
         elif packet_type == ServerPacket.EXCEPTION:
             packet.exception = await self.receive_exception()
@@ -696,6 +776,11 @@ class Connection:
                 if packet is True:
                     continue
 
+                if packet.type == ServerPacket.DATA:
+                    # Awaits on already-buffered data never reach the event loop, so consecutive
+                    # buffered blocks would otherwise decode back-to-back and starve co-resident
+                    # tasks. Yielding here makes max_block_size an effective fairness knob.
+                    await asyncio.sleep(0)
                 yield packet
         except (Exception, asyncio.CancelledError, KeyboardInterrupt):
             await self.disconnect()
@@ -812,6 +897,8 @@ class Connection:
         logger.debug("Query: %s", query)
 
         await self.writer.flush()
+        if self.metrics_enabled:
+            self._metrics_query_sent_at = perf_counter()
 
     async def _init_connection(self, host: str, port: int):
         self.host, self.port = host, port
@@ -828,8 +915,12 @@ class Connection:
             sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             if self.tcp_keepalive:
                 self._set_keepalive(sock)
-        self.writer = BufferedWriter(writer)
-        self.reader = BufferedReader(reader)
+        self.writer = BufferedWriter(writer, self.buffer_size)
+        self.reader = BufferedReader(
+            reader,
+            self.buffer_size,
+            metrics=ReaderMetrics() if self.metrics_enabled else None,
+        )
         self.block_reader = self.get_block_reader()
         self.block_reader_raw = BlockReader(self.reader, self.writer, self.context)
         self.block_writer = self.get_block_writer()
@@ -852,6 +943,7 @@ class Connection:
         self.server_info = None
 
         self.is_query_executing = False
+        self._metrics_query_sent_at = None
 
     async def disconnect(self):
         if self.connected:
@@ -961,6 +1053,23 @@ class Connection:
                     columnar=columnar,
                 )
             self.last_query.store_elapsed(time() - start_time)
+            client_timings = self.last_query.client_timings
+            if client_timings is not None:
+                metrics_logger.debug(
+                    "query elapsed=%f network_wait=%f decode=%f decompress=%f "
+                    "max_block_decode=%f ttfb=%f blocks=%d rows=%d "
+                    "bytes_compressed=%d bytes_raw=%d",
+                    self.last_query.elapsed,
+                    client_timings.network_wait,
+                    client_timings.decode,
+                    client_timings.decompress,
+                    client_timings.max_block_decode,
+                    client_timings.ttfb,
+                    client_timings.blocks,
+                    client_timings.rows,
+                    client_timings.bytes_compressed,
+                    client_timings.bytes_raw,
+                )
             return rv
 
     async def execute_with_progress(

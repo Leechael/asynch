@@ -1,3 +1,4 @@
+from types import MappingProxyType
 from typing import Optional
 
 from asynch.cursors import Cursor
@@ -90,6 +91,14 @@ class Connection:
     @property
     def connected(self) -> Optional[bool]:
         return self._connection.connected
+
+    @property
+    def last_query(self):
+        return self._connection.last_query
+
+    @property
+    def settings(self):
+        return MappingProxyType(self._connection.settings)
 
     @property
     def is_query_executing(self) -> bool:

@@ -2,7 +2,7 @@ import asyncio
 from typing import TYPE_CHECKING, Optional
 
 from asynch.errors import PartiallyConsumedQueryError
-from asynch.proto.result import QueryInfo
+from asynch.proto.result import ClientTimings, QueryInfo
 
 if TYPE_CHECKING:
     from asynch.proto.connection import Connection
@@ -49,7 +49,11 @@ class ExecuteContext:
     async def __aenter__(self):
         try:
             await self._connection.force_connect(self._settings)
-            self._connection.last_query = QueryInfo(self._connection.reader)
+            client_timings = ClientTimings() if self._connection.metrics_enabled else None
+            self._connection.last_query = QueryInfo(
+                self._connection.reader,
+                client_timings=client_timings,
+            )
         except PartiallyConsumedQueryError:
             raise
         except (Exception, asyncio.CancelledError, KeyboardInterrupt):

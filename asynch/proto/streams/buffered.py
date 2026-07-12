@@ -1,5 +1,6 @@
 import struct
 from asyncio import StreamReader, StreamWriter
+from time import perf_counter
 
 import leb128
 
@@ -9,6 +10,15 @@ from asynch.proto.compression import BaseCompressor, get_decompressor_cls
 
 MAX_UINT64 = (1 << 64) - 1
 MAX_INT64 = (1 << 63) - 1
+
+
+class ReaderMetrics:
+    __slots__ = ("network_wait", "socket_reads", "bytes_read")
+
+    def __init__(self):
+        self.network_wait = 0.0
+        self.socket_reads = 0
+        self.bytes_read = 0
 
 
 class BufferedWriter:
@@ -101,9 +111,15 @@ class BufferedWriter:
 
 
 class BufferedReader:
-    def __init__(self, reader: StreamReader, buffer_max_size: int = constants.BUFFER_SIZE):
+    def __init__(
+        self,
+        reader: StreamReader,
+        buffer_max_size: int = constants.BUFFER_SIZE,
+        metrics: ReaderMetrics = None,
+    ):
         self.buffer_max_size = buffer_max_size
         self.reader = reader
+        self.metrics = metrics
         self.buffer = bytearray()
         self.current_buffer_size = 0
         self.position = 0
@@ -128,7 +144,14 @@ class BufferedReader:
         self.current_buffer_size = 0
 
     async def _read_into_buffer(self):
-        packet = await self.reader.read(self.buffer_max_size)
+        if self.metrics is None:
+            packet = await self.reader.read(self.buffer_max_size)
+        else:
+            start_time = perf_counter()
+            packet = await self.reader.read(self.buffer_max_size)
+            self.metrics.network_wait += perf_counter() - start_time
+            self.metrics.socket_reads += 1
+            self.metrics.bytes_read += len(packet)
         self.buffer.extend(packet)
         self.current_buffer_size = len(self.buffer)
 
@@ -236,12 +259,35 @@ class CompressedBufferedReader(BufferedReader):
         buffer_max_size: int = constants.BUFFER_SIZE,
     ):
         self.raw_reader = raw_reader
+        self.timings = None
         super().__init__(reader, buffer_max_size)
 
     async def _read_compressed_data(self):
+        if self.timings is None:
+            compressed_hash = await self.raw_reader.read_uint128()
+            method_byte = await self.raw_reader.read_uint8()
+
+            decompressor_cls = get_decompressor_cls(method_byte)
+            decompressor = decompressor_cls(self.raw_reader, BufferedWriter())
+
+            if decompressor.method_byte is not None:
+                extra_header_size = 1  # method
+            else:
+                extra_header_size = 0
+
+            return await decompressor.get_decompressed_data(
+                method_byte, compressed_hash, extra_header_size
+            )
+
+        return await self._read_compressed_data_with_metrics()
+
+    async def _read_compressed_data_with_metrics(self):
+        raw_metrics = self.raw_reader.metrics
+        network_wait_before = raw_metrics.network_wait
+        start_time = perf_counter()
+
         compressed_hash = await self.raw_reader.read_uint128()
         method_byte = await self.raw_reader.read_uint8()
-
         decompressor_cls = get_decompressor_cls(method_byte)
         decompressor = decompressor_cls(self.raw_reader, BufferedWriter())
 
@@ -250,9 +296,20 @@ class CompressedBufferedReader(BufferedReader):
         else:
             extra_header_size = 0
 
-        return await decompressor.get_decompressed_data(
-            method_byte, compressed_hash, extra_header_size
+        def store_frame_sizes(compressed_size, uncompressed_size):
+            self.timings.bytes_compressed += compressed_size
+            self.timings.bytes_raw += uncompressed_size
+
+        decompressed = await decompressor.get_decompressed_data(
+            method_byte,
+            compressed_hash,
+            extra_header_size,
+            on_frame=store_frame_sizes,
         )
+        network_wait = raw_metrics.network_wait - network_wait_before
+        decompress = max(perf_counter() - start_time - network_wait, 0.0)
+        self.timings.decompress += decompress
+        return decompressed
 
     async def _read_into_buffer(self):
         self.buffer = await self._read_compressed_data()

@@ -1,4 +1,3 @@
-from asynch.proto import constants
 from asynch.proto.compression import BaseCompressor, import_cityhash
 from asynch.proto.context import Context
 from asynch.proto.streams.block import BlockReader, BlockWriter
@@ -18,11 +17,12 @@ class CompressedBlockWriter(BlockWriter):
         context: Context,
         compressor: BaseCompressor,
         compress_block_size: int,
+        buffer_size: int,
     ):
         self.compressor = compressor
         self.compress_block_size = compress_block_size
         self.raw_writer = writer
-        self.writer = CompressedBufferedWriter(compressor, writer.writer, constants.BUFFER_SIZE)
+        self.writer = CompressedBufferedWriter(compressor, writer.writer, buffer_size)
         super().__init__(reader, self.writer, context)
 
     async def finalize(self):
@@ -67,9 +67,8 @@ class CompressedBlockReader(BlockReader):
         reader: BufferedReader,
         writer: BufferedWriter,
         context,
+        buffer_size: int,
     ):
         self.raw_reader = reader
-        self.reader = CompressedBufferedReader(
-            self.raw_reader, reader.reader, constants.BUFFER_SIZE
-        )
+        self.reader = CompressedBufferedReader(self.raw_reader, reader.reader, buffer_size)
         super().__init__(self.reader, writer, context)
