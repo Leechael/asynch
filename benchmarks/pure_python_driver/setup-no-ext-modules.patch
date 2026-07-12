@@ -1,0 +1,11 @@
+--- a/setup.py
++++ b/setup.py
+@@ -124,7 +124,6 @@
+     install_requires=[
+         'pytz',
+         'tzlocal'
+     ],
+-    ext_modules=extensions,
+     extras_require={
+         'lz4': [
+             'lz4<=3.0.1; implementation_name=="pypy"',

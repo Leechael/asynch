@@ -6,7 +6,12 @@ on:
   workflow_dispatch:
     inputs:
       wp01_benchmark:
-        description: Run only the manual WP01 D/A benchmark job
+        description: Run only the manual WP01/WP07 benchmark job
+        required: false
+        default: false
+        type: boolean
+      wp07_benchmark:
+        description: Run only the manual WP07 pure-Python C control
         required: false
         default: false
         type: boolean
@@ -22,7 +27,7 @@ concurrency:
 
 jobs:
   old-servers:
-    if: ${{ inputs.wp01_benchmark != true }}
+    if: ${{ inputs.wp01_benchmark != true && inputs.wp07_benchmark != true }}
     name: Python 3.13 / CH ${{ matrix.name }}
     runs-on: ubuntu-latest
     strategy:
@@ -67,7 +72,7 @@ jobs:
         run: PYTHONDEVMODE=1 PYTHONTRACEMALLOC=1 pytest
 
   python-versions:
-    if: ${{ inputs.wp01_benchmark != true }}
+    if: ${{ inputs.wp01_benchmark != true && inputs.wp07_benchmark != true }}
     name: Python ${{ matrix.python }} / CH latest
     runs-on: ubuntu-latest
     strategy:
@@ -104,7 +109,7 @@ jobs:
         run: PYTHONDEVMODE=1 PYTHONTRACEMALLOC=1 pytest
 
   zstd-suite:
-    if: ${{ inputs.wp01_benchmark != true }}
+    if: ${{ inputs.wp01_benchmark != true && inputs.wp07_benchmark != true }}
     name: Full suite over zstd
     runs-on: ubuntu-latest
     services:
@@ -138,7 +143,7 @@ jobs:
         run: PYTHONDEVMODE=1 PYTHONTRACEMALLOC=1 pytest
 
   without-cityhash:
-    if: ${{ inputs.wp01_benchmark != true }}
+    if: ${{ inputs.wp01_benchmark != true && inputs.wp07_benchmark != true }}
     name: Compression dependency absent
     runs-on: ubuntu-latest
     env:
@@ -158,7 +163,7 @@ jobs:
         run: pytest tests/test_proto/test_failure_compat.py::test_cityhash_dependency_contract
 
   tls:
-    if: ${{ inputs.wp01_benchmark != true }}
+    if: ${{ inputs.wp01_benchmark != true && inputs.wp07_benchmark != true }}
     name: TLS handshake and compression
     runs-on: ubuntu-latest
     steps:
@@ -178,8 +183,8 @@ jobs:
         run: pytest tests/test_compat_matrix.py::test_real_tls_handshake
 
   wp01-benchmarks:
-    if: ${{ inputs.wp01_benchmark == true }}
-    name: Manual WP01 D/A/B/C measurement
+    if: ${{ inputs.wp01_benchmark == true || inputs.wp07_benchmark == true }}
+    name: Manual WP01 D/A/B/C and WP07 pure-Python measurement
     runs-on: ubuntu-latest
     timeout-minutes: 60
     services:
@@ -203,11 +208,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install ".[compression]" clickhouse-driver
+          mkdir -p benchmarks/results/workflow
       - name: Run pool-contention matrix
+        if: ${{ inputs.wp01_benchmark == true }}
         env:
           CLICKHOUSE_DSN: clickhouse://default:@127.0.0.1:9000/default
         run: |
-          mkdir -p benchmarks/results/workflow
           python -m benchmarks.bench_pool_contention --rtt-ms 0 --json \
             > benchmarks/results/workflow/pool-rtt-0ms.json
 
@@ -226,6 +232,7 @@ jobs:
             trap - EXIT
           done
       - name: Run event-loop-lag matrix
+        if: ${{ inputs.wp01_benchmark == true }}
         env:
           CLICKHOUSE_DSN: clickhouse://default:@127.0.0.1:9000/default
           WP01_ROWS: ${{ inputs.wp01_rows }}
@@ -233,6 +240,7 @@ jobs:
           python -m benchmarks.bench_loop_lag --rows "$WP01_ROWS" --json \
             > benchmarks/results/workflow/loop-lag.json
       - name: Run pool-level concurrency matrix
+        if: ${{ inputs.wp01_benchmark == true }}
         env:
           CLICKHOUSE_DSN: clickhouse://default:@127.0.0.1:9000/default
         run: |
@@ -266,7 +274,12 @@ jobs:
 
           assert importlib.util.find_spec("Cython") is None
           PY
-      - name: Run single-query source-build matrix
+      - name: Build pure-Python clickhouse-driver control
+        run: |
+          python benchmarks/pure_python_driver/build_env.py \
+            --output-dir /tmp/wp07-clickhouse-driver-pure-python \
+            > benchmarks/results/workflow/pure-python-build.json
+      - name: Run four-way single-query throughput matrix
         env:
           CLICKHOUSE_DSN: clickhouse://default:@127.0.0.1:9000/default
           WP01_ROWS: ${{ inputs.wp01_rows }}
@@ -275,7 +288,9 @@ jobs:
             --rows "$WP01_ROWS" \
             --source-driver-python /tmp/wp01-clickhouse-driver-source/bin/python \
             --source-driver-revision 49afa09 \
-            --json > benchmarks/results/workflow/throughput-source-c-extension.json
+            --pure-python-python /tmp/wp07-clickhouse-driver-pure-python/venv/bin/python \
+            --text-output benchmarks/results/workflow/throughput-pure-python.txt \
+            --json > benchmarks/results/workflow/throughput-pure-python.json
       - name: Upload raw measurement reports
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
