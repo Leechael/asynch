@@ -526,18 +526,19 @@ class Connection:
 
     async def receive_data(self, raw=False):
         revision = self.server_info.used_revision
-        if revision >= constants.DBMS_MIN_REVISION_WITH_TEMPORARY_TABLES:
-            await self.reader.read_str()
-
         block_reader = self.block_reader_raw if raw else self.block_reader
         client_timings = self.last_query.client_timings if self.last_query is not None else None
         if client_timings is None:
+            if revision >= constants.DBMS_MIN_REVISION_WITH_TEMPORARY_TABLES:
+                await self.reader.read_str()
             return await block_reader.read()
 
         reader_metrics = self.reader.metrics
         network_wait_before = reader_metrics.network_wait
         bytes_read_before = reader_metrics.bytes_read
         start_time = perf_counter()
+        if revision >= constants.DBMS_MIN_REVISION_WITH_TEMPORARY_TABLES:
+            await self.reader.read_str()
         if self.compression and not raw:
             block_reader.reader.timings = client_timings
 

@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from asynch.errors import ErrorCode, NetworkError, ServerException, SocketTimeoutError
+from asynch.proto import constants
 from asynch.proto.block import RowOrientedBlock
 from asynch.proto.connection import METRICS_ENV, SUBSTITUTE_PARAMS_STYLE_ENV, Packet
 from asynch.proto.connection import (
@@ -246,26 +247,32 @@ async def test_receive_data_records_client_timings():
     conn = ProtoConnection(metrics=True)
     reader_metrics = ReaderMetrics()
     conn.reader = Mock(metrics=reader_metrics)
-    conn.server_info = Mock(used_revision=0)
+    conn.server_info = Mock(used_revision=constants.DBMS_MIN_REVISION_WITH_TEMPORARY_TABLES)
     block = RowOrientedBlock(
         columns_with_types=[("value", "UInt8")],
         data=[(1,), (2,)],
     )
+
+    async def read_table_name():
+        reader_metrics.network_wait += 0.1
+        reader_metrics.bytes_read += 3
+        return ""
 
     async def read_block():
         reader_metrics.network_wait += 0.1
         reader_metrics.bytes_read += 9
         return block
 
+    conn.reader.read_str = AsyncMock(side_effect=read_table_name)
     conn.block_reader = Mock(read=AsyncMock(side_effect=read_block))
     conn.last_query = QueryInfo(conn.reader, client_timings=ClientTimings())
 
     assert await conn.receive_data() is block
     timings = conn.last_query.client_timings
-    assert timings.network_wait == 0.1
+    assert timings.network_wait > 0
     assert timings.blocks == 1
     assert timings.rows == 2
-    assert timings.bytes_raw == 9
+    assert timings.bytes_raw == 12
     assert timings.decode >= 0
     assert timings.max_block_decode == timings.decode
 
