@@ -208,12 +208,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install ".[compression]" clickhouse-driver
+          mkdir -p benchmarks/results/workflow
       - name: Run pool-contention matrix
         if: ${{ inputs.wp01_benchmark == true }}
         env:
           CLICKHOUSE_DSN: clickhouse://default:@127.0.0.1:9000/default
         run: |
-          mkdir -p benchmarks/results/workflow
           python -m benchmarks.bench_pool_contention --rtt-ms 0 --json \
             > benchmarks/results/workflow/pool-rtt-0ms.json
 
