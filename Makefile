@@ -14,6 +14,7 @@ deps:
 	pdm install -G lint -G test -G compression --without dev --no-self
 
 bench: deps
+	pdm install -G dev -G compression --no-self
 	pdm run python3 benchmark/main.py
 
 check:
