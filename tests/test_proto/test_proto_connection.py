@@ -197,6 +197,27 @@ def test_metrics_environment_enablement(monkeypatch, environment, expected):
 
 
 @pytest.mark.no_clickhouse
+def test_buffer_size_preserves_existing_positional_arguments():
+    conn = ProtoConnection(
+        "user",
+        "password",
+        "host",
+        9001,
+        "database",
+        "client",
+        1,
+        2,
+        3,
+        4,
+        False,
+        True,
+    )
+
+    assert conn.secure_socket is True
+    assert conn.buffer_size == constants.BUFFER_SIZE
+
+
+@pytest.mark.no_clickhouse
 @pytest.mark.parametrize("buffer_size", [0, -1, True, "not-an-integer"])
 def test_buffer_size_rejects_invalid_values(buffer_size):
     with pytest.raises(ValueError, match="buffer_size"):
@@ -275,6 +296,38 @@ async def test_receive_data_records_client_timings():
     assert timings.bytes_raw == 12
     assert timings.decode >= 0
     assert timings.max_block_decode == timings.decode
+
+
+@pytest.mark.no_clickhouse
+async def test_receive_packet_accounts_for_buffered_data_header():
+    conn = ProtoConnection(metrics=True)
+    reader_metrics = ReaderMetrics()
+    conn.reader = Mock(metrics=reader_metrics)
+    conn.server_info = Mock(used_revision=0)
+    block = RowOrientedBlock(
+        columns_with_types=[("value", "UInt8")],
+        data=[(1,), (2,)],
+    )
+
+    async def read_packet_type():
+        reader_metrics.network_wait += 0.1
+        reader_metrics.bytes_read += 1
+        return ServerPacket.DATA
+
+    async def read_block():
+        reader_metrics.network_wait += 0.1
+        reader_metrics.bytes_read += 9
+        return block
+
+    conn.reader.read_varint = AsyncMock(side_effect=read_packet_type)
+    conn.block_reader = Mock(read=AsyncMock(side_effect=read_block))
+    conn.last_query = QueryInfo(conn.reader, client_timings=ClientTimings())
+
+    packet = await conn._receive_packet_impl()
+
+    assert packet.block is block
+    assert conn.last_query.client_timings.bytes_raw == 10
+    assert conn.last_query.client_timings.network_wait > 0
 
 
 @pytest.mark.no_clickhouse

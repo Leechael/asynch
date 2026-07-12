@@ -71,7 +71,13 @@ class BaseDecompressor:
     def decompress_data(self, data, uncompressed_size):
         raise NotImplementedError
 
-    async def get_decompressed_data(self, method_byte, compressed_hash, extra_header_size):
+    async def get_decompressed_data(
+        self,
+        method_byte,
+        compressed_hash,
+        extra_header_size,
+        on_frame=None,
+    ):
         CityHash128 = import_cityhash()
 
         size_with_header = await self.reader.read_uint32()
@@ -88,6 +94,8 @@ class BaseDecompressor:
         reader.buffer = compressed
         reader.current_buffer_size = len(compressed)
         uncompressed_size = await reader.read_uint32()
+        if on_frame is not None:
+            on_frame(compressed_size, uncompressed_size)
         compressed = compressed[4:compressed_size]
         return self.decompress_data(compressed, uncompressed_size)
 

@@ -69,6 +69,12 @@ _SUBSTITUTE_PARAMS_STYLE_ALIASES = {
 _METRICS_TRUE_VALUES = {"1", "true", "on"}
 
 
+def resolve_metrics_enabled(metrics: Optional[bool]) -> bool:
+    if metrics is not None:
+        return metrics
+    return os.environ.get(METRICS_ENV, "").lower() in _METRICS_TRUE_VALUES
+
+
 _INSERT_VALUES_PLACEHOLDER_RE = re.compile(
     r"""
     \A(?P<prefix>\s*INSERT\b.*\bVALUES)\s*
@@ -132,7 +138,6 @@ class Connection:
         sync_request_timeout: int = constants.DBMS_DEFAULT_SYNC_REQUEST_TIMEOUT_SEC,
         compress_block_size: int = constants.DEFAULT_COMPRESS_BLOCK_SIZE,
         compression: Union[bool, str] = False,
-        buffer_size: Optional[int] = None,
         secure: bool = False,
         # Secure socket parameters.
         verify: bool = True,
@@ -152,6 +157,7 @@ class Connection:
         stack_track=False,
         settings_is_important=False,
         metrics: Optional[bool] = None,
+        buffer_size: Optional[int] = None,
         **kwargs,
     ):
         self.stack_track = stack_track
@@ -265,9 +271,7 @@ class Connection:
 
     @staticmethod
     def _resolve_metrics_enabled(metrics: Optional[bool]) -> bool:
-        if metrics is not None:
-            return metrics
-        return os.environ.get(METRICS_ENV, "").lower() in _METRICS_TRUE_VALUES
+        return resolve_metrics_enabled(metrics)
 
     @staticmethod
     def _resolve_buffer_size(buffer_size: Optional[int]) -> int:
@@ -524,7 +528,7 @@ class Connection:
             logger.debug("Socket closed", exc_info=e)
         return False
 
-    async def receive_data(self, raw=False):
+    async def receive_data(self, raw=False, metrics_baseline=None):
         revision = self.server_info.used_revision
         block_reader = self.block_reader_raw if raw else self.block_reader
         client_timings = self.last_query.client_timings if self.last_query is not None else None
@@ -534,9 +538,12 @@ class Connection:
             return await block_reader.read()
 
         reader_metrics = self.reader.metrics
-        network_wait_before = reader_metrics.network_wait
-        bytes_read_before = reader_metrics.bytes_read
-        start_time = perf_counter()
+        if metrics_baseline is None:
+            start_time = perf_counter()
+            network_wait_before = reader_metrics.network_wait
+            bytes_read_before = reader_metrics.bytes_read
+        else:
+            start_time, network_wait_before, bytes_read_before = metrics_baseline
         if revision >= constants.DBMS_MIN_REVISION_WITH_TEMPORARY_TABLES:
             await self.reader.read_str()
         if self.compression and not raw:
@@ -673,6 +680,15 @@ class Connection:
 
     async def _receive_packet_impl(self):
         packet = Packet()
+        client_timings = self.last_query.client_timings if self.last_query is not None else None
+        metrics_baseline = None
+        if client_timings is not None:
+            reader_metrics = self.reader.metrics
+            metrics_baseline = (
+                perf_counter(),
+                reader_metrics.network_wait,
+                reader_metrics.bytes_read,
+            )
 
         packet.type = packet_type = await self.reader.read_varint()
 
@@ -680,7 +696,7 @@ class Connection:
             if self._metrics_query_sent_at is not None:
                 self.last_query.client_timings.ttfb = perf_counter() - self._metrics_query_sent_at
                 self._metrics_query_sent_at = None
-            packet.block = await self.receive_data()
+            packet.block = await self.receive_data(metrics_baseline=metrics_baseline)
 
         elif packet_type == ServerPacket.EXCEPTION:
             packet.exception = await self.receive_exception()

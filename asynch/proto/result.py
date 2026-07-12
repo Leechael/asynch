@@ -1,4 +1,5 @@
 from collections.abc import AsyncGenerator
+from typing import Optional
 
 from asynch.proto.block import BlockStreamProfileInfo
 from asynch.proto.progress import Progress
@@ -198,7 +199,11 @@ class IterQueryResult:
 
 
 class QueryInfo:
-    def __init__(self, reader: BufferedReader, client_timings: ClientTimings = None):
+    def __init__(
+        self,
+        reader: BufferedReader,
+        client_timings: Optional[ClientTimings] = None,
+    ):
         self.profile_info = BlockStreamProfileInfo(reader)
         self.progress = Progress(reader)
         self.elapsed = 0

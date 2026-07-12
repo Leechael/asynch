@@ -4,9 +4,9 @@ from time import perf_counter
 
 import leb128
 
-from asynch.errors import ChecksumDoesntMatchError, OperationalError, TooLargeStringSize
+from asynch.errors import OperationalError, TooLargeStringSize
 from asynch.proto import constants
-from asynch.proto.compression import BaseCompressor, get_decompressor_cls, import_cityhash
+from asynch.proto.compression import BaseCompressor, get_decompressor_cls
 
 MAX_UINT64 = (1 << 64) - 1
 MAX_INT64 = (1 << 63) - 1
@@ -296,30 +296,19 @@ class CompressedBufferedReader(BufferedReader):
         else:
             extra_header_size = 0
 
-        size_with_header = await self.raw_reader.read_uint32()
-        compressed_size = size_with_header - extra_header_size - 4
-        compressed = await self.raw_reader.read_bytes(compressed_size)
+        def store_frame_sizes(compressed_size, uncompressed_size):
+            self.timings.bytes_compressed += compressed_size
+            self.timings.bytes_raw += uncompressed_size
 
-        checksum_writer = BufferedWriter()
-        await checksum_writer.write_uint8(method_byte)
-        await checksum_writer.write_uint32(size_with_header)
-        await checksum_writer.write_bytes(compressed)
-        if import_cityhash()(checksum_writer.buffer) != compressed_hash:
-            raise ChecksumDoesntMatchError()
-
-        compressed_reader = BufferedReader(self.raw_reader.reader)
-        compressed_reader.buffer = compressed
-        compressed_reader.current_buffer_size = len(compressed)
-        uncompressed_size = await compressed_reader.read_uint32()
-        decompressed = decompressor.decompress_data(
-            compressed[4:compressed_size], uncompressed_size
+        decompressed = await decompressor.get_decompressed_data(
+            method_byte,
+            compressed_hash,
+            extra_header_size,
+            on_frame=store_frame_sizes,
         )
-
         network_wait = raw_metrics.network_wait - network_wait_before
         decompress = max(perf_counter() - start_time - network_wait, 0.0)
         self.timings.decompress += decompress
-        self.timings.bytes_compressed += compressed_size
-        self.timings.bytes_raw += uncompressed_size
         return decompressed
 
     async def _read_into_buffer(self):

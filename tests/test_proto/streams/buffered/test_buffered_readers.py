@@ -16,6 +16,22 @@ from asynch.proto.streams.buffered import (
 pytestmark = pytest.mark.no_clickhouse
 
 
+async def _compressed_frame(data: bytes):
+    compressor_writer = BufferedWriter()
+    await compressor_writer.write_bytes(data)
+    compressor = LZ4Compressor(compressor_writer)
+    payload = bytearray([CompressionMethodByte.LZ4])
+    payload.extend(await compressor.get_compressed_data(extra_header_size=1))
+
+    frame_writer = BufferedWriter()
+    await frame_writer.write_uint128(import_cityhash()(payload))
+    await frame_writer.write_bytes(payload)
+    stream_reader = StreamReader()
+    stream_reader.feed_data(frame_writer.buffer)
+    stream_reader.feed_eof()
+    return stream_reader, frame_writer.buffer, len(payload) - 5
+
+
 @pytest.mark.parametrize(
     ("stream_data", "answer"),
     [
@@ -69,20 +85,7 @@ async def test_reader_metrics_count_socket_reads_and_bytes():
 
 async def test_compressed_reader_does_not_double_count_raw_socket_reads():
     data = b"compressed metrics"
-    compressor_writer = BufferedWriter()
-    await compressor_writer.write_bytes(data)
-    compressor = LZ4Compressor(compressor_writer)
-    payload = bytearray([CompressionMethodByte.LZ4])
-    payload.extend(await compressor.get_compressed_data(extra_header_size=1))
-
-    frame_writer = BufferedWriter()
-    await frame_writer.write_uint128(import_cityhash()(payload))
-    await frame_writer.write_bytes(payload)
-    frame = frame_writer.buffer
-
-    stream_reader = StreamReader()
-    stream_reader.feed_data(frame)
-    stream_reader.feed_eof()
+    stream_reader, frame, _ = await _compressed_frame(data)
     metrics = ReaderMetrics()
     raw_reader = BufferedReader(stream_reader, buffer_max_size=len(frame), metrics=metrics)
     reader = CompressedBufferedReader(raw_reader, stream_reader)
@@ -96,20 +99,7 @@ async def test_compressed_reader_does_not_double_count_raw_socket_reads():
 
 async def test_compressed_reader_records_compressed_timing_and_sizes():
     data = b"compressed timing metrics"
-    compressor_writer = BufferedWriter()
-    await compressor_writer.write_bytes(data)
-    compressor = LZ4Compressor(compressor_writer)
-    payload = bytearray([CompressionMethodByte.LZ4])
-    payload.extend(await compressor.get_compressed_data(extra_header_size=1))
-
-    frame_writer = BufferedWriter()
-    await frame_writer.write_uint128(import_cityhash()(payload))
-    await frame_writer.write_bytes(payload)
-    frame = frame_writer.buffer
-
-    stream_reader = StreamReader()
-    stream_reader.feed_data(frame)
-    stream_reader.feed_eof()
+    stream_reader, frame, compressed_size = await _compressed_frame(data)
     raw_metrics = ReaderMetrics()
     raw_reader = BufferedReader(stream_reader, buffer_max_size=len(frame), metrics=raw_metrics)
     reader = CompressedBufferedReader(raw_reader, stream_reader)
@@ -118,6 +108,6 @@ async def test_compressed_reader_records_compressed_timing_and_sizes():
 
     assert await reader.read_bytes(len(data)) == data
     assert timings.decompress >= 0
-    assert timings.bytes_compressed == len(payload) - 5
+    assert timings.bytes_compressed == compressed_size
     assert timings.bytes_raw == len(data)
     assert raw_metrics.network_wait >= 0

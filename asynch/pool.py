@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 from collections import deque
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
@@ -10,12 +9,10 @@ from typing import Optional
 from asynch.connection import Connection
 from asynch.errors import AsynchPoolError
 from asynch.proto import constants
-from asynch.proto.connection import METRICS_ENV
+from asynch.proto.connection import resolve_metrics_enabled
 from asynch.proto.models.enums import PoolStatus
 
 logger = logging.getLogger(__name__)
-
-_METRICS_TRUE_VALUES = {"1", "true", "on"}
 
 
 class PoolMetrics:
@@ -43,7 +40,7 @@ class Pool:
             raise ValueError("minsize is greater than maxsize")
         self._maxsize = maxsize
         self._minsize = minsize
-        self.metrics = PoolMetrics() if self._resolve_metrics_enabled(metrics) else None
+        self.metrics = PoolMetrics() if resolve_metrics_enabled(metrics) else None
         self._connection_kwargs = kwargs
         self._sem = asyncio.Semaphore(maxsize)
         self._lock = asyncio.Lock()
@@ -147,12 +144,6 @@ class Pool:
     @property
     def minsize(self) -> int:
         return self._minsize
-
-    @staticmethod
-    def _resolve_metrics_enabled(metrics: Optional[bool]) -> bool:
-        if metrics is not None:
-            return metrics
-        return os.environ.get(METRICS_ENV, "").lower() in _METRICS_TRUE_VALUES
 
     async def _create_connection(self) -> None:
         if self._pool_size == self._maxsize:
