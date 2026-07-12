@@ -397,11 +397,20 @@ async def verify_pure_python_results(
     args: argparse.Namespace, tables: dict[str, str]
 ) -> list[dict[str, object]]:
     """Compare every wheel/pure-Python result row before timing either mode."""
+    order_by = {
+        "int64": "c0",
+        "string": "s0",
+        "nullable": "n0, n1, n2, n3",
+        "lowcardinality": "k0, k1, k2",
+    }
     checks = []
     for compression in args.compression:
         dsn = update_compression(args.dsn, compression)
         for shape, table in tables.items():
-            query = f"SELECT * FROM {table}"  # noqa: S608
+            # MergeTree's unordered block delivery can differ between two
+            # correct connections; sort only this correctness query. Timed
+            # queries below deliberately remain the original unsorted form.
+            query = f"SELECT * FROM {table} ORDER BY {order_by[shape]}"  # noqa: S608
             wheel_rows = await asyncio.to_thread(cython_rows, dsn, query)
             pure_rows = await asyncio.to_thread(
                 pure_python_rows, args.pure_python_python, dsn, query
