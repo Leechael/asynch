@@ -235,7 +235,6 @@ jobs:
       - name: Run pool-level concurrency matrix
         env:
           CLICKHOUSE_DSN: clickhouse://default:@127.0.0.1:9000/default
-          WP01_ROWS: ${{ inputs.wp01_rows }}
         run: |
           python -m benchmarks.bench_concurrency \
             --rtt-ms 0 --workers 1,8,32,128 --iterations 5 --rounds 5 \
