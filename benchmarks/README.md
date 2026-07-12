@@ -92,7 +92,7 @@ synchronous driver plus threads; the same parameters will be rerun after the
 lock refactor. It is not an experiment in single-connection concurrency or
 protocol multiplexing.
 
-## Single-query throughput (C / WP07 pure-Python control)
+## Single-query throughput (C / pure-Python control)
 
 ```bash
 python -m benchmarks.bench_throughput \
@@ -115,7 +115,7 @@ If a real pure-Python fallback becomes available, pass
 from `--no-binary` source installs, so the script refuses to mislabel that
 build as pure Python.
 
-WP07 provides that fallback as four reviewed mechanical translations at
+This repository provides that fallback as four reviewed mechanical translations at
 `benchmarks/pure_python_driver/`. Build it in an isolated environment, then run
 all four drivers in one invocation:
 
@@ -146,12 +146,12 @@ the C-extension `lz4` and `clickhouse-cityhash` dependencies, matching the
 asynch environment, so the ratios isolate driver decoding rather than claiming
 an all-Python compression or hashing stack.
 
-### WP07 first result (2026-07-12)
+### First pure-Python result (2026-07-12)
 
 `results/2026-07-12-wp07-pure-python-throughput.{json,txt}` records the
 successful CI run. Its full-row gate passed for every shape/compression mode.
-String has `R_decython=0.206–0.208` and `R_async=0.214–0.217`; Nullable has
-`0.407–0.412` and `0.282–0.287`, respectively. Both costs are material. String
+String has `R_decython=0.217–0.220` and `R_async=0.223–0.225`; Nullable has
+`0.411–0.415` and `0.295–0.296`, respectively. Both costs are material. String
 is nearly balanced, with the Cython-removal cost slightly larger; Nullable's
 async cost is larger. This is decision input, not a remediation choice.
 
@@ -166,7 +166,7 @@ from nonexistent single-connection protocol multiplexing.
 
 When a local ClickHouse host is unavailable, manually dispatch the existing
 `compat-nightly` workflow from the target branch with `wp01_benchmark=true`.
-That switch runs only the D/A/B/C and WP07 measurement job—not a PR gate—and
+That switch runs only the D/A/B/C and pure-Python measurement job—not a PR gate—and
 uploads raw JSON/text reports, including the two B RTT controls, the
 no-Cython source-build C control, and the pure-Python C control, as an
 artifact.
