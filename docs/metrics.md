@@ -257,6 +257,20 @@ Pooling does not reset a native-protocol session between borrowers. Session
 settings and `TIMEZONE_UPDATE` session timezone changes can therefore leak to
 the next borrower. This is a protocol property, not a metric failure.
 
+`Pool` checks `connected` and `is_query_executing` synchronously on every
+checkout and checkin. It does not ping on every borrow or return: set
+`pool_recycle` to the maximum idle age (in seconds) before an idle connection
+is pinged on checkout; it defaults to `3600`. Set `pool_recycle=-1` to disable
+idle pings. This keeps routine pool operations free of network round trips,
+but means a connection that silently dies before the idle threshold can reach
+its first query. That query reports its normal network error, after which
+applications and SQLAlchemy's disconnect handling can replace the connection.
+
+Returning a disconnected or in-flight (poisoned) connection discards it without
+raising a pool-maintenance error to the borrower. The pool replenishes such a
+slot lazily on a later checkout, so it can temporarily contain fewer than
+`minsize` connections after a failure.
+
 Borrowers must restore the session state they change, or discard and reconnect
 a connection that is no longer safe to reuse. Applications using SQLAlchemy
 should remember that its dialect constructs `Connection` directly; its pool is

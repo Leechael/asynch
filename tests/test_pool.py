@@ -17,30 +17,20 @@ def _get_pool_size(pool: Pool) -> int:
 
 @pytest.mark.no_clickhouse
 @pytest.mark.asyncio
-async def test_release_reconnects_poisoned_connection_inv_s7():
+async def test_release_discards_poisoned_connection_without_raising_inv_s7():
     pool = Pool(minsize=0, maxsize=1)
     conn = Connection()
-    conn._opened = True
     conn._connection.connected = True
     conn._connection.is_query_executing = True
 
-    async def disconnect():
-        conn._connection.connected = False
-        conn._connection.is_query_executing = False
-
-    async def connect():
-        conn._connection.connected = True
-
-    conn._connection.disconnect = AsyncMock(side_effect=disconnect)
-    conn._connection.connect = AsyncMock(side_effect=connect)
-    pool._acquired_connections.append(conn)
+    conn.close = AsyncMock()
+    pool._acquired_connections.add(conn)
 
     await pool._release_connection(conn)
 
     assert pool.acquired_connections == 0
-    assert pool.free_connections == 1
-    assert conn.connected is True
-    assert conn.is_query_executing is False
+    assert pool.free_connections == 0
+    conn.close.assert_awaited_once()
 
 
 @pytest.mark.no_clickhouse
@@ -61,7 +51,6 @@ async def test_pool_metrics_record_acquisition_wait():
     conn = Connection()
     pool._acquire_connection = AsyncMock(return_value=conn)
     pool._release_connection = AsyncMock()
-    pool._ensure_minsize_connections = AsyncMock()
 
     async with pool.connection() as acquired:
         assert acquired is conn
@@ -70,6 +59,116 @@ async def test_pool_metrics_record_acquisition_wait():
     assert pool.metrics.acquisitions == 1
     assert pool.metrics.acquire_wait_total >= 0
     assert pool.metrics.acquire_wait_max == pool.metrics.acquire_wait_total
+
+
+@pytest.mark.no_clickhouse
+@pytest.mark.asyncio
+async def test_acquire_replaces_synchronously_dead_connection():
+    pool = Pool(minsize=0, maxsize=1)
+    dead = Connection()
+    dead._connection.connected = False
+    dead.close = AsyncMock()
+    replacement = Connection()
+    replacement._connection.connected = True
+    pool._free_connections.append(dead)
+    pool._idle_since[dead] = 0.0
+    pool._new_connection = AsyncMock(return_value=replacement)
+
+    acquired = await pool._acquire_connection()
+
+    assert acquired is replacement
+    assert pool.acquired_connections == 1
+    assert pool.free_connections == 0
+    dead.close.assert_awaited_once()
+
+
+@pytest.mark.no_clickhouse
+@pytest.mark.asyncio
+async def test_idle_ping_only_runs_after_pool_recycle_threshold():
+    pool = Pool(minsize=0, maxsize=2, pool_recycle=10)
+    pool._clock = lambda: 15.0
+    fresh = Connection()
+    fresh._connection.connected = True
+    fresh.ping = AsyncMock()
+    stale = Connection()
+    stale._connection.connected = True
+    stale.ping = AsyncMock()
+    pool._free_connections.extend((fresh, stale))
+    pool._idle_since[fresh] = 10.0
+    pool._idle_since[stale] = 5.0
+
+    assert await pool._acquire_connection() is fresh
+    assert await pool._acquire_connection() is stale
+
+    fresh.ping.assert_not_awaited()
+    stale.ping.assert_awaited_once()
+
+
+@pytest.mark.no_clickhouse
+@pytest.mark.asyncio
+async def test_failed_idle_ping_discards_connection_and_tries_the_next_one():
+    pool = Pool(minsize=0, maxsize=1, pool_recycle=10)
+    pool._clock = lambda: 10.0
+    stale = Connection()
+    stale._connection.connected = True
+    stale.ping = AsyncMock(side_effect=ConnectionError("lost peer"))
+    stale.close = AsyncMock()
+    replacement = Connection()
+    replacement._connection.connected = True
+    pool._free_connections.append(stale)
+    pool._idle_since[stale] = 0.0
+    pool._new_connection = AsyncMock(return_value=replacement)
+
+    assert await pool._acquire_connection() is replacement
+
+    stale.ping.assert_awaited_once()
+    stale.close.assert_awaited_once()
+
+
+@pytest.mark.no_clickhouse
+@pytest.mark.asyncio
+async def test_healthy_release_performs_no_network_maintenance():
+    pool = Pool(minsize=0, maxsize=1)
+    conn = Connection()
+    conn._connection.connected = True
+    conn.ping = AsyncMock()
+    conn.close = AsyncMock()
+    pool._acquired_connections.add(conn)
+
+    await pool._release_connection(conn)
+
+    assert pool.acquired_connections == 0
+    assert pool.free_connections == 1
+    conn.ping.assert_not_awaited()
+    conn.close.assert_not_awaited()
+
+
+@pytest.mark.no_clickhouse
+@pytest.mark.asyncio
+async def test_concurrent_borrowing_keeps_pool_size_bounded_without_leaks():
+    maxsize = 4
+    pool = Pool(minsize=0, maxsize=maxsize, pool_recycle=-1)
+    connections = [Connection() for _ in range(maxsize)]
+    for conn in connections:
+        conn._connection.connected = True
+        pool._free_connections.append(conn)
+        pool._idle_since[conn] = 0.0
+
+    seen = set()
+
+    async def borrow() -> None:
+        async with pool.connection() as conn:
+            seen.add(conn)
+            assert pool.acquired_connections <= maxsize
+            assert pool.free_connections + pool.acquired_connections <= maxsize
+            await asyncio.sleep(0)
+
+    await asyncio.gather(*(borrow() for _ in range(40)))
+
+    assert seen == set(connections)
+    assert pool.acquired_connections == 0
+    assert pool.free_connections == maxsize
+    assert _get_pool_size(pool) == maxsize
 
 
 @pytest.mark.asyncio
@@ -87,6 +186,9 @@ async def test_pool_size_boundary_values():
     Pool(minsize=1, maxsize=1)
     with pytest.raises(ValueError, match=r"minsize is greater than maxsize"):
         Pool(minsize=2, maxsize=1)
+
+    with pytest.raises(ValueError, match=r"pool_recycle is expected to be greater or equal to -1"):
+        Pool(pool_recycle=-2)
 
 
 @pytest.mark.asyncio
