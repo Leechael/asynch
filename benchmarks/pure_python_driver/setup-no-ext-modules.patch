@@ -1,9 +1,10 @@
 --- a/setup.py
 +++ b/setup.py
-@@ -121,7 +121,6 @@
-     },
-     packages=find_packages('.', exclude=['tests*']),
-     python_requires='>=3.9, <4',
+@@ -124,7 +124,6 @@
+     install_requires=[
+         'pytz',
+         'tzlocal'
+     ],
 -    ext_modules=extensions,
      extras_require={
          'lz4': [
