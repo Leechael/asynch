@@ -15,11 +15,21 @@ on:
         required: false
         default: false
         type: boolean
+      pool_only:
+        description: Run only the B/D pool benchmark matrices
+        required: false
+        default: false
+        type: boolean
       wp01_rows:
         description: Rows in each deterministic A workload
         required: false
         default: "1000000"
         type: string
+      pool_only:
+        description: Run only the B/D pool benchmark matrices
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -27,7 +37,7 @@ concurrency:
 
 jobs:
   old-servers:
-    if: ${{ inputs.wp01_benchmark != true && inputs.wp07_benchmark != true }}
+    if: ${{ inputs.wp01_benchmark != true && inputs.wp07_benchmark != true && inputs.pool_only != true }}
     name: Python 3.13 / CH ${{ matrix.name }}
     runs-on: ubuntu-latest
     strategy:
@@ -72,7 +82,7 @@ jobs:
         run: PYTHONDEVMODE=1 PYTHONTRACEMALLOC=1 pytest
 
   python-versions:
-    if: ${{ inputs.wp01_benchmark != true && inputs.wp07_benchmark != true }}
+    if: ${{ inputs.wp01_benchmark != true && inputs.wp07_benchmark != true && inputs.pool_only != true }}
     name: Python ${{ matrix.python }} / CH latest
     runs-on: ubuntu-latest
     strategy:
@@ -109,7 +119,7 @@ jobs:
         run: PYTHONDEVMODE=1 PYTHONTRACEMALLOC=1 pytest
 
   zstd-suite:
-    if: ${{ inputs.wp01_benchmark != true && inputs.wp07_benchmark != true }}
+    if: ${{ inputs.wp01_benchmark != true && inputs.wp07_benchmark != true && inputs.pool_only != true }}
     name: Full suite over zstd
     runs-on: ubuntu-latest
     services:
@@ -143,7 +153,7 @@ jobs:
         run: PYTHONDEVMODE=1 PYTHONTRACEMALLOC=1 pytest
 
   without-cityhash:
-    if: ${{ inputs.wp01_benchmark != true && inputs.wp07_benchmark != true }}
+    if: ${{ inputs.wp01_benchmark != true && inputs.wp07_benchmark != true && inputs.pool_only != true }}
     name: Compression dependency absent
     runs-on: ubuntu-latest
     env:
@@ -163,7 +173,7 @@ jobs:
         run: pytest tests/test_proto/test_failure_compat.py::test_cityhash_dependency_contract
 
   tls:
-    if: ${{ inputs.wp01_benchmark != true && inputs.wp07_benchmark != true }}
+    if: ${{ inputs.wp01_benchmark != true && inputs.wp07_benchmark != true && inputs.pool_only != true }}
     name: TLS handshake and compression
     runs-on: ubuntu-latest
     steps:
@@ -183,7 +193,7 @@ jobs:
         run: pytest tests/test_compat_matrix.py::test_real_tls_handshake
 
   wp01-benchmarks:
-    if: ${{ inputs.wp01_benchmark == true || inputs.wp07_benchmark == true }}
+    if: ${{ inputs.wp01_benchmark == true || inputs.wp07_benchmark == true || inputs.pool_only == true }}
     name: Manual WP01 D/A/B/C and WP07 pure-Python measurement
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -209,8 +219,37 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install ".[compression]" clickhouse-driver
           mkdir -p benchmarks/results/workflow
+      - name: Run pool-level concurrency matrix
+        if: ${{ inputs.wp01_benchmark == true || inputs.pool_only == true }}
+        env:
+          CLICKHOUSE_DSN: clickhouse://default:@127.0.0.1:9000/default
+        run: |
+          mkdir -p benchmarks/results/workflow
+          for rtt in 0 1 5 20; do
+            if [ "$rtt" = 0 ]; then
+              python -m benchmarks.bench_concurrency \
+                --rtt-ms 0 --workers 1,8,32,128 --iterations 5 --rounds 5 \
+                --seed 20260712 --json \
+                > benchmarks/results/workflow/concurrency-rtt-0ms.json
+              continue
+            fi
+            delay_ms=$(python -c "print(${rtt} / 2)")
+            python -m benchmarks._proxy --listen 19000 --target 127.0.0.1:9000 \
+              --delay-ms "$delay_ms" &
+            proxy_pid=$!
+            trap 'kill "$proxy_pid" 2>/dev/null || true' EXIT
+            sleep 1
+            CLICKHOUSE_DSN='clickhouse://default:@127.0.0.1:19000/default' \
+              python -m benchmarks.bench_concurrency \
+                --rtt-ms "$rtt" --workers 1,8,32,128 --iterations 5 --rounds 5 \
+                --seed 20260712 --json \
+                > "benchmarks/results/workflow/concurrency-rtt-${rtt}ms.json"
+            kill "$proxy_pid"
+            wait "$proxy_pid" || true
+            trap - EXIT
+          done
       - name: Run pool-contention matrix
-        if: ${{ inputs.wp01_benchmark == true }}
+        if: ${{ inputs.wp01_benchmark == true || inputs.pool_only == true }}
         env:
           CLICKHOUSE_DSN: clickhouse://default:@127.0.0.1:9000/default
         run: |
@@ -239,30 +278,8 @@ jobs:
         run: |
           python -m benchmarks.bench_loop_lag --rows "$WP01_ROWS" --json \
             > benchmarks/results/workflow/loop-lag.json
-      - name: Run pool-level concurrency matrix
-        if: ${{ inputs.wp01_benchmark == true }}
-        env:
-          CLICKHOUSE_DSN: clickhouse://default:@127.0.0.1:9000/default
-        run: |
-          python -m benchmarks.bench_concurrency \
-            --rtt-ms 0 --workers 1,8,32,128 --iterations 5 --rounds 5 \
-            --seed 20260712 --json \
-            > benchmarks/results/workflow/concurrency-rtt-0ms.json
-
-          python -m benchmarks._proxy --listen 19000 --target 127.0.0.1:9000 \
-            --delay-ms 2.5 &
-          proxy_pid=$!
-          trap 'kill "$proxy_pid" 2>/dev/null || true' EXIT
-          sleep 1
-          CLICKHOUSE_DSN='clickhouse://default:@127.0.0.1:19000/default' \
-            python -m benchmarks.bench_concurrency \
-              --rtt-ms 5 --workers 1,8,32,128 --iterations 5 --rounds 5 \
-              --seed 20260712 --json \
-              > benchmarks/results/workflow/concurrency-rtt-5ms.json
-          kill "$proxy_pid"
-          wait "$proxy_pid" || true
-          trap - EXIT
       - name: Build no-Cython source clickhouse-driver
+        if: ${{ inputs.wp01_benchmark == true || inputs.wp07_benchmark == true }}
         run: |
           git clone https://github.com/mymarilyn/clickhouse-driver.git /tmp/clickhouse-driver
           git -C /tmp/clickhouse-driver checkout 49afa09
@@ -275,11 +292,13 @@ jobs:
           assert importlib.util.find_spec("Cython") is None
           PY
       - name: Build pure-Python clickhouse-driver control
+        if: ${{ inputs.wp01_benchmark == true || inputs.wp07_benchmark == true }}
         run: |
           python benchmarks/pure_python_driver/build_env.py \
             --output-dir /tmp/wp07-clickhouse-driver-pure-python \
             > benchmarks/results/workflow/pure-python-build.json
       - name: Run four-way single-query throughput matrix
+        if: ${{ inputs.wp01_benchmark == true || inputs.wp07_benchmark == true }}
         env:
           CLICKHOUSE_DSN: clickhouse://default:@127.0.0.1:9000/default
           WP01_ROWS: ${{ inputs.wp01_rows }}
