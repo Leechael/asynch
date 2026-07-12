@@ -25,8 +25,9 @@ export CLICKHOUSE_DSN='clickhouse://default:@127.0.0.1:9000/default'
 
 Run the latency proxy in a separate terminal. Its delay is one way, so a
 `--delay-ms 5` proxy is reported to the benchmark as a 10 ms injected RTT.
-The proxy delays only the first byte in each direction of a TCP connection and
-does not parse or alter ClickHouse packets.
+The proxy delays the first byte of each TCP read burst in each direction and
+does not parse or alter ClickHouse packets; this applies latency to the small
+ping/query request-response exchanges measured by D.
 
 ```bash
 python -m benchmarks._proxy --listen 19000 --target 127.0.0.1:9000 --delay-ms 5

@@ -1,8 +1,9 @@
 """A deliberately small TCP proxy for injecting loopback latency.
 
-The proxy is transport-only: it does not inspect ClickHouse packets.  It delays
-the first byte in each direction for every accepted connection, then copies the
-rest of the stream unchanged.
+The proxy is transport-only: it does not inspect ClickHouse packets. It delays
+the first byte of each read burst in each direction, then copies that burst
+unchanged. This makes request/response-sized ClickHouse traffic observe the
+configured latency without protocol parsing.
 """
 
 from __future__ import annotations
@@ -29,16 +30,9 @@ async def close_writer(writer: asyncio.StreamWriter) -> None:
 async def relay(
     reader: asyncio.StreamReader, writer: asyncio.StreamWriter, delay_seconds: float
 ) -> None:
-    first = await reader.read(1)
-    if not first:
-        await close_writer(writer)
-        return
-    if delay_seconds:
-        await asyncio.sleep(delay_seconds)
-    writer.write(first)
-    await writer.drain()
-
     while data := await reader.read(64 * 1024):
+        if delay_seconds:
+            await asyncio.sleep(delay_seconds)
         writer.write(data)
         await writer.drain()
     await close_writer(writer)
@@ -103,7 +97,7 @@ def parse_args() -> argparse.Namespace:
         "--delay-ms",
         type=float,
         required=True,
-        help="one-way delay before the first byte in each direction (must be non-negative)",
+        help="one-way delay before each relayed burst (must be non-negative)",
     )
     args = parser.parse_args()
     if not 0 <= args.listen <= 65535:
