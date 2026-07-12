@@ -5,6 +5,9 @@
 class BufferedReader:
     def __init__(self, bufsize):
         self.buffer = bytearray(bufsize)
+        # pyx:34/71 obtains a fresh char pointer over this bytearray. A
+        # memoryview is Python's non-copying equivalent of that pointer.
+        self.buffer_view = memoryview(self.buffer)
         self.position = 0
         self.current_buffer_size = 0
         super().__init__()
@@ -20,7 +23,7 @@ class BufferedReader:
         if next_position < self.current_buffer_size:
             position = self.position
             self.position = next_position
-            return bytes(self.buffer[position : self.position])
+            return self.buffer_view[position : self.position].tobytes()
 
         result = bytes()
         while unread > 0:
@@ -29,7 +32,7 @@ class BufferedReader:
                 self.position = 0
 
             read_bytes = min(unread, self.current_buffer_size - self.position)
-            result += bytes(self.buffer[self.position : self.position + read_bytes])
+            result += self.buffer_view[self.position : self.position + read_bytes].tobytes()
             self.position += read_bytes
             unread -= read_bytes
 
@@ -69,16 +72,16 @@ class BufferedReader:
             if right > self.current_buffer_size:
                 # pyx:121-169 maintains a manually allocated C string for an
                 # optional decode. Python bytes is the equivalent owned buffer.
-                result = bytes(self.buffer[self.position : self.current_buffer_size])
+                result = self.buffer_view[self.position : self.current_buffer_size].tobytes()
                 bytes_read = self.current_buffer_size - self.position
                 while bytes_read != size:
                     self.position = size - bytes_read
                     self.read_into_buffer()
                     self.position = min(self.position, self.current_buffer_size)
-                    result += bytes(self.buffer[: self.position])
+                    result += self.buffer_view[: self.position].tobytes()
                     bytes_read += self.position
             else:
-                result = bytes(self.buffer[self.position : right])
+                result = self.buffer_view[self.position : right].tobytes()
                 self.position = right
 
             if encoding:
@@ -132,6 +135,7 @@ class CompressedBufferedReader(BufferedReader):
 
     def read_into_buffer(self):
         self.buffer = bytearray(self.read_block())
+        self.buffer_view = memoryview(self.buffer)
         self.current_buffer_size = len(self.buffer)
         if self.current_buffer_size == 0:
             raise EOFError("Unexpected EOF while reading bytes")
