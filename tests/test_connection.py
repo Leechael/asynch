@@ -173,6 +173,21 @@ async def test_close_disconnects_lazily_connected_connection_inv_s3():
 
 
 @pytest.mark.no_clickhouse
+@pytest.mark.asyncio
+async def test_refresh_reconnects_wire_dead_connection_inv_s7():
+    conn = Connection()
+    conn._opened = True
+    conn._connection.connected = False
+    conn._connection.disconnect = AsyncMock()
+    conn._connection.connect = AsyncMock()
+
+    await conn._refresh()
+
+    conn._connection.disconnect.assert_awaited_once()
+    conn._connection.connect.assert_awaited_once()
+
+
+@pytest.mark.no_clickhouse
 def test_terminate_aborts_connected_transport_inv_s8():
     conn = Connection()
     transport = Mock()

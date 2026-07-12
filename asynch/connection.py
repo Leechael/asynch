@@ -212,16 +212,17 @@ class Connection:
         :return: None
         """
 
-        if self.status == ConnectionStatus.created:
+        if not self._opened:
             msg = f"the {self} is not opened to be refreshed"
             raise ConnectionError(msg)
-        if self.status == ConnectionStatus.closed:
+        if self._closed:
             msg = f"the {self} is already closed"
             raise ConnectionError(msg)
 
         try:
             await self.ping()
         except ConnectionError:
+            await self._connection.disconnect()
             await self.connect()
 
     async def rollback(self):

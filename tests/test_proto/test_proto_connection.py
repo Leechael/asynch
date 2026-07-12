@@ -1,9 +1,10 @@
 import asyncio
+import logging
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import cast
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -16,6 +17,7 @@ from asynch.proto.connection import (
     Connection as ProtoConnection,
 )
 from asynch.proto.cs import ServerInfo
+from asynch.proto.protocol import ServerPacket
 
 
 @pytest.fixture()
@@ -58,6 +60,24 @@ async def test_ping_processing_with_invalid_package_size(proto_conn: ProtoConnec
         result = await proto_conn.ping()
         mock.assert_called_once()
         assert result is False
+
+
+@pytest.mark.no_clickhouse
+@pytest.mark.asyncio
+async def test_ping_skips_socket_for_executing_query_inv_s6(caplog):
+    caplog.set_level(logging.DEBUG, logger="asynch.proto.connection")
+    conn = ProtoConnection()
+    conn.connected = True
+    conn.is_query_executing = True
+    conn.writer = Mock()
+    conn.writer.write_varint = AsyncMock()
+    conn.writer.flush = AsyncMock()
+    conn.reader = Mock(reader=Mock(at_eof=Mock(return_value=False)))
+    conn.reader.read_varint = AsyncMock(return_value=ServerPacket.PONG)
+
+    assert await conn.ping() is False
+    conn.writer.write_varint.assert_not_awaited()
+    assert "query is executing" in caplog.text
 
 
 @pytest.mark.asyncio

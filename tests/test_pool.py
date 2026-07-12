@@ -1,5 +1,6 @@
 import asyncio
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -11,6 +12,34 @@ from asynch.proto import constants
 
 def _get_pool_size(pool: Pool) -> int:
     return pool.acquired_connections + pool.free_connections
+
+
+@pytest.mark.no_clickhouse
+@pytest.mark.asyncio
+async def test_release_reconnects_poisoned_connection_inv_s7():
+    pool = Pool(minsize=0, maxsize=1)
+    conn = Connection()
+    conn._opened = True
+    conn._connection.connected = True
+    conn._connection.is_query_executing = True
+
+    async def disconnect():
+        conn._connection.connected = False
+        conn._connection.is_query_executing = False
+
+    async def connect():
+        conn._connection.connected = True
+
+    conn._connection.disconnect = AsyncMock(side_effect=disconnect)
+    conn._connection.connect = AsyncMock(side_effect=connect)
+    pool._acquired_connections.append(conn)
+
+    await pool._release_connection(conn)
+
+    assert pool.acquired_connections == 0
+    assert pool.free_connections == 1
+    assert conn.connected is True
+    assert conn.is_query_executing is False
 
 
 @pytest.mark.asyncio

@@ -445,6 +445,10 @@ class Connection:
             sock.setsockopt(socket.IPPROTO_TCP, tcp_keepalive, interval_sec)
 
     async def ping(self) -> bool:
+        if self.is_query_executing:
+            logger.debug("Cannot ping %s while a query is executing", self)
+            return False
+
         async def receive_response():
             packet_type = await self.reader.read_varint()
             while packet_type == ServerPacket.PROGRESS:
