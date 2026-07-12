@@ -136,16 +136,24 @@ before timing begins; a mismatch stops the run. The JSON records its eight
 shape/compression checks, the four resolved `.py` module paths, and the pinned
 checkout revision. The output also reports p50-based `R_decython =
 pure_python / wheel` and `R_async = asynch / pure_python`, alongside the
-identity check `R_decython * R_async = asynch / wheel`. Ratios are only
-interpreted within the same run, never against an earlier run.
+published `asynch / wheel` ratio. Their product is an algebraic consistency
+check for the published p50 table, not an independent validation; it therefore
+cannot establish that any measured difference is within run-to-run noise.
+Ratios are only interpreted within the same run, never against an earlier run.
+
+The pure-Python control removes the four driver Cython modules only. It retains
+the C-extension `lz4` and `clickhouse-cityhash` dependencies, matching the
+asynch environment, so the ratios isolate driver decoding rather than claiming
+an all-Python compression or hashing stack.
 
 ### WP07 first result (2026-07-12)
 
 `results/2026-07-12-wp07-pure-python-throughput.{json,txt}` records the
 successful CI run. Its full-row gate passed for every shape/compression mode.
 String has `R_decython=0.206–0.208` and `R_async=0.214–0.217`; Nullable has
-`0.407–0.412` and `0.282–0.287`, respectively. Both costs are material; async
-loss is larger for both shapes. This is decision input, not a remediation choice.
+`0.407–0.412` and `0.282–0.287`, respectively. Both costs are material. String
+is nearly balanced, with the Cython-removal cost slightly larger; Nullable's
+async cost is larger. This is decision input, not a remediation choice.
 
 ## Results
 

@@ -1,4 +1,4 @@
-"""Measure single-query decoding throughput across three real driver modes."""
+"""Measure single-query decoding throughput across real driver modes."""
 
 from __future__ import annotations
 
@@ -588,18 +588,20 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
 def text_report(result: dict[str, object]) -> str:
     lines = []
     environment = result["environment"]
-    lines.append("WP07 single-query throughput benchmark")
+    lines.append("Single-query throughput benchmark")
     lines.append(
         "environment: ClickHouse={version} revision={revision}; Python={python}; rows={rows}; "
         "seed={seed}; compression={compression}; rounds={rounds} (+1 warmup); "
         "source_driver_python={source_driver_python}; "
         "pure_python_python={pure_python_python}".format(**environment)
     )
-    lines.append(
-        "pure-Python correctness gate: "
-        + ", ".join(
-            "{shape}/{compression} rows={rows} passed={passed}".format(**item)
-            for item in result["correctness_gate"]
+    if result["correctness_gate"]:
+        lines.append(
+            "pure-Python correctness gate: "
+            + ", ".join(
+                "{shape}/{compression} rows={rows} passed={passed}".format(**item)
+                for item in result["correctness_gate"]
+            )
         )
     )
     for item in result["results"]:
