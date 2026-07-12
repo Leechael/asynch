@@ -40,6 +40,23 @@ async def test_force_connect_probes_before_starting_query():
     assert conn.is_query_executing is True
 
 
+@pytest.mark.parametrize("connected", [False, True])
+async def test_force_connect_applies_query_settings_before_connect(connected):
+    conn = ProtoConnection()
+    conn.connected = connected
+    conn.ping = AsyncMock(return_value=False)
+
+    async def connect():
+        assert conn.context.client_settings["quota_key"] == "query-quota"
+        conn.connected = True
+
+    conn.connect = AsyncMock(side_effect=connect)
+
+    await conn.force_connect({"quota_key": "query-quota"})
+
+    conn.connect.assert_awaited_once()
+
+
 async def test_concurrent_execute_does_not_overwrite_reserved_query_settings():
     conn = ProtoConnection()
     connect_started = asyncio.Event()

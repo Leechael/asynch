@@ -1051,6 +1051,8 @@ class Connection:
             if self.is_query_executing:
                 raise PartiallyConsumedQueryError()
 
+            self.make_query_settings(settings)
+
             if not self.connected:
                 await self.connect()
 
@@ -1060,7 +1062,6 @@ class Connection:
                 logger.info("Connection was closed, reconnecting.")
                 await self.connect()
 
-            self.make_query_settings(settings)
             self.is_query_executing = True
 
     async def process_ordinary_query(
