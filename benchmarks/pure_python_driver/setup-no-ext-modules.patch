@@ -1,0 +1,10 @@
+--- a/setup.py
++++ b/setup.py
+@@ -114,7 +114,6 @@
+     },
+     packages=find_packages('.', exclude=['tests*']),
+     python_requires='>=3.9, <4',
+-    ext_modules=extensions,
+     extras_require={
+         'lz4': [
+             'lz4<=3.0.1; implementation_name=="pypy"',

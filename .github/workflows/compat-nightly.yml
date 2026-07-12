@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       wp01_benchmark:
-        description: Run only the manual WP01 D/A benchmark job
+        description: Run only the manual WP01/WP07 benchmark job
         required: false
         default: false
         type: boolean
@@ -179,7 +179,7 @@ jobs:
 
   wp01-benchmarks:
     if: ${{ inputs.wp01_benchmark == true }}
-    name: Manual WP01 D/A/B/C measurement
+    name: Manual WP01 D/A/B/C and WP07 pure-Python measurement
     runs-on: ubuntu-latest
     timeout-minutes: 60
     services:
@@ -266,7 +266,12 @@ jobs:
 
           assert importlib.util.find_spec("Cython") is None
           PY
-      - name: Run single-query source-build matrix
+      - name: Build pure-Python clickhouse-driver control
+        run: |
+          python benchmarks/pure_python_driver/build_env.py \
+            --output-dir /tmp/wp07-clickhouse-driver-pure-python \
+            > benchmarks/results/workflow/pure-python-build.json
+      - name: Run four-way single-query throughput matrix
         env:
           CLICKHOUSE_DSN: clickhouse://default:@127.0.0.1:9000/default
           WP01_ROWS: ${{ inputs.wp01_rows }}
@@ -275,7 +280,9 @@ jobs:
             --rows "$WP01_ROWS" \
             --source-driver-python /tmp/wp01-clickhouse-driver-source/bin/python \
             --source-driver-revision 49afa09 \
-            --json > benchmarks/results/workflow/throughput-source-c-extension.json
+            --pure-python-python /tmp/wp07-clickhouse-driver-pure-python/venv/bin/python \
+            --text-output benchmarks/results/workflow/throughput-pure-python.txt \
+            --json > benchmarks/results/workflow/throughput-pure-python.json
       - name: Upload raw measurement reports
         if: ${{ always() }}
         uses: actions/upload-artifact@v4

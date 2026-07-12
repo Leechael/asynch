@@ -92,7 +92,7 @@ synchronous driver plus threads; the same parameters will be rerun after the
 lock refactor. It is not an experiment in single-connection concurrency or
 protocol multiplexing.
 
-## Single-query throughput (C)
+## Single-query throughput (C / WP07 pure-Python control)
 
 ```bash
 python -m benchmarks.bench_throughput \
@@ -115,6 +115,30 @@ If a real pure-Python fallback becomes available, pass
 from `--no-binary` source installs, so the script refuses to mislabel that
 build as pure Python.
 
+WP07 provides that fallback as four reviewed mechanical translations at
+`benchmarks/pure_python_driver/`. Build it in an isolated environment, then run
+all four drivers in one invocation:
+
+```bash
+python benchmarks/pure_python_driver/build_env.py --output-dir /tmp/wp07-pure-python
+python -m benchmarks.bench_throughput \
+  --source-driver-python /path/to/no-cython-source-build/bin/python \
+  --source-driver-revision 49afa09 \
+  --pure-python-python /tmp/wp07-pure-python/venv/bin/python \
+  --text-output benchmarks/results/DATE-wp07-throughput.txt \
+  --json > benchmarks/results/DATE-wp07-throughput.json
+```
+
+With the pure-Python interpreter, C first compares every row returned by the
+wheel and pure-Python drivers for Int64, String, Nullable, and LowCardinality
+with compression off and lz4. This non-optional correctness gate finishes
+before timing begins; a mismatch stops the run. The JSON records its eight
+shape/compression checks, the four resolved `.py` module paths, and the pinned
+checkout revision. The output also reports p50-based `R_decython =
+pure_python / wheel` and `R_async = asynch / pure_python`, alongside the
+identity check `R_decython * R_async = asynch / wheel`. Ratios are only
+interpreted within the same run, never against an earlier run.
+
 ## Results
 
 Commit first-run reports under `benchmarks/results/` with an ISO date prefix.
@@ -126,9 +150,10 @@ from nonexistent single-connection protocol multiplexing.
 
 When a local ClickHouse host is unavailable, manually dispatch the existing
 `compat-nightly` workflow from the target branch with `wp01_benchmark=true`.
-That switch runs only the D/A/B/C measurement job—not a PR gate—and uploads
-raw JSON reports, including the two B RTT controls and the no-Cython
-source-build C control, as an artifact.
+That switch runs only the D/A/B/C and WP07 measurement job—not a PR gate—and
+uploads raw JSON/text reports, including the two B RTT controls, the
+no-Cython source-build C control, and the pure-Python C control, as an
+artifact.
 Download that artifact, inspect every raw distribution and conclusion, then
 commit the unchanged reports under
 `benchmarks/results/` with their measurement date.

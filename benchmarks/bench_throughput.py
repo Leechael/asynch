@@ -5,11 +5,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import pickle
 import subprocess
 import sys
+import tempfile
 from collections.abc import Iterable
 from pathlib import Path
 from time import perf_counter
+from typing import Optional
 
 from asynch.connection import Connection
 from benchmarks.bench_loop_lag import (
@@ -26,6 +29,11 @@ from benchmarks.bench_loop_lag import (
 PURE_DRIVER_PROBE = r"""
 import importlib.machinery
 import json
+import subprocess
+import sys
+from importlib.metadata import distribution
+from pathlib import Path
+from urllib.parse import unquote, urlparse
 import clickhouse_driver.bufferedreader as bufferedreader
 import clickhouse_driver.bufferedwriter as bufferedwriter
 import clickhouse_driver.columns.largeint as largeint
@@ -33,10 +41,34 @@ import clickhouse_driver.varint as varint
 
 modules = (bufferedreader, bufferedwriter, largeint, varint)
 suffixes = importlib.machinery.EXTENSION_SUFFIXES
-extensions = [module.__file__ for module in modules if module.__file__.endswith(tuple(suffixes))]
+paths = [Path(module.__file__).resolve() for module in modules]
+extensions = [str(path) for path in paths if path.name.endswith(tuple(suffixes))]
 if extensions:
     raise SystemExit("not a pure-Python clickhouse-driver: " + ", ".join(extensions))
-print(json.dumps({"pure_python": True}))
+direct_url_text = distribution("clickhouse-driver").read_text("direct_url.json")
+if not direct_url_text:
+    raise SystemExit("pure-Python comparison must be installed from a local source checkout")
+direct_url = json.loads(direct_url_text)
+source_url = urlparse(direct_url["url"])
+if source_url.scheme != "file":
+    raise SystemExit("pure-Python comparison must be installed from a local source checkout")
+source_path = Path(unquote(source_url.path)).resolve()
+revision = subprocess.run(
+    ["git", "-C", str(source_path), "rev-parse", "HEAD"],
+    check=True,
+    capture_output=True,
+    text=True,
+).stdout.strip()
+expected_revision = sys.argv[1]
+if not revision.startswith(expected_revision):
+    raise SystemExit(f"pure-Python revision {revision} does not match {expected_revision}")
+if any(source_path not in path.parents for path in paths):
+    raise SystemExit("pure-Python modules were not imported from the source checkout")
+print(json.dumps({
+    "pure_python_module_paths": [str(path) for path in paths],
+    "pure_python_source_direct_url": direct_url,
+    "pure_python_source_revision": revision,
+}))
 """
 
 PURE_DRIVER_QUERY = r"""
@@ -67,6 +99,27 @@ try:
 finally:
     client.disconnect()
 """
+
+PURE_DRIVER_ROWS = r"""
+import json
+import pickle
+import sys
+
+from clickhouse_driver import Client
+
+dsn, query, output_path = sys.argv[1:]
+client = Client.from_url(dsn)
+try:
+    client.execute("SELECT 1")
+    rows = client.execute(query)
+    with open(output_path, "wb") as output:
+        pickle.dump(rows, output, protocol=pickle.HIGHEST_PROTOCOL)
+    print(json.dumps({"rows": len(rows)}))
+finally:
+    client.disconnect()
+"""
+
+PURE_DRIVER_REVISION = "49afa09"
 
 SOURCE_DRIVER_PROBE = r"""
 import importlib.machinery
@@ -252,6 +305,17 @@ def cython_query(dsn: str, query: str) -> tuple[int, float]:
         client.disconnect()
 
 
+def cython_rows(dsn: str, query: str) -> list[object]:
+    from clickhouse_driver import Client
+
+    client = Client.from_url(dsn)
+    try:
+        client.execute("SELECT 1")
+        return client.execute(query)
+    finally:
+        client.disconnect()
+
+
 def run_pure_python(executable: Path, dsn: str, query: str) -> tuple[int, float]:
     completed = subprocess.run(  # noqa: S603 -- explicit interpreter is verified before use
         [str(executable), "-c", PURE_DRIVER_QUERY, dsn, query],
@@ -263,11 +327,33 @@ def run_pure_python(executable: Path, dsn: str, query: str) -> tuple[int, float]
     return int(payload["rows"]), float(payload["elapsed_s"])
 
 
-def check_pure_python(executable: Path) -> None:
+def pure_python_rows(executable: Path, dsn: str, query: str) -> list[object]:
+    with tempfile.NamedTemporaryFile(suffix=".pickle", delete=False) as output:
+        output_path = Path(output.name)
+    try:
+        completed = subprocess.run(  # noqa: S603 -- explicit interpreter is verified before use
+            [str(executable), "-c", PURE_DRIVER_ROWS, dsn, query, str(output_path)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        payload = json.loads(completed.stdout)
+        with output_path.open("rb") as output:
+            rows = pickle.load(  # noqa: S301 -- data came from the verified local interpreter
+                output
+            )
+        if len(rows) != int(payload["rows"]):
+            raise RuntimeError("pure-Python comparison row serialization count mismatch")
+        return rows
+    finally:
+        output_path.unlink(missing_ok=True)
+
+
+def check_pure_python(executable: Path) -> dict[str, object]:
     if not executable.is_file():
         raise ValueError(f"--pure-python-python does not point to a file: {executable}")
     completed = subprocess.run(  # noqa: S603 -- probe the explicit interpreter
-        [str(executable), "-c", PURE_DRIVER_PROBE],
+        [str(executable), "-c", PURE_DRIVER_PROBE, PURE_DRIVER_REVISION],
         check=False,
         capture_output=True,
         text=True,
@@ -278,6 +364,7 @@ def check_pure_python(executable: Path) -> None:
             "pure-Python comparison is unavailable: provide an interpreter with a real "
             f"pure-Python clickhouse-driver fallback ({message})"
         )
+    return json.loads(completed.stdout)
 
 
 def check_source_driver(executable: Path, expected_revision: str) -> dict[str, object]:
@@ -306,9 +393,74 @@ def run_source_driver(executable: Path, dsn: str, query: str) -> tuple[int, floa
     return int(payload["rows"]), float(payload["elapsed_s"])
 
 
+async def verify_pure_python_results(
+    args: argparse.Namespace, tables: dict[str, str]
+) -> list[dict[str, object]]:
+    """Compare every wheel/pure-Python result row before timing either mode."""
+    checks = []
+    for compression in args.compression:
+        dsn = update_compression(args.dsn, compression)
+        for shape, table in tables.items():
+            query = f"SELECT * FROM {table}"  # noqa: S608
+            wheel_rows = await asyncio.to_thread(cython_rows, dsn, query)
+            pure_rows = await asyncio.to_thread(
+                pure_python_rows, args.pure_python_python, dsn, query
+            )
+            if wheel_rows != pure_rows:
+                raise RuntimeError(
+                    "pure-Python correctness gate failed: "
+                    f"wheel and pure-Python rows differ for {shape} compression={compression}"
+                )
+            checks.append(
+                {
+                    "shape": shape,
+                    "compression": compression,
+                    "rows": len(wheel_rows),
+                    "passed": True,
+                }
+            )
+    return checks
+
+
+def retention_ratios(results: list[dict[str, object]]) -> list[dict[str, object]]:
+    by_shape = {(item["shape"], item["compression"], item["driver"]): item for item in results}
+    ratios = []
+    for shape, compression, driver in by_shape:
+        if driver != "asynch":
+            continue
+        key = (shape, compression)
+        required = [
+            (*key, "asynch"),
+            (*key, "clickhouse_driver_cython"),
+            (*key, "clickhouse_driver_pure_python"),
+        ]
+        if not all(item in by_shape for item in required):
+            continue
+        asynch = by_shape[required[0]]["throughput_rows_per_sec"]["p50"]
+        wheel = by_shape[required[1]]["throughput_rows_per_sec"]["p50"]
+        pure_python = by_shape[required[2]]["throughput_rows_per_sec"]["p50"]
+        decython = pure_python / wheel
+        async_retention = asynch / pure_python
+        direct = asynch / wheel
+        identity = decython * async_retention
+        ratios.append(
+            {
+                "shape": shape,
+                "compression": compression,
+                "r_decython": decython,
+                "r_async": async_retention,
+                "asynch_over_wheel": direct,
+                "identity_product": identity,
+                "identity_absolute_delta": abs(identity - direct),
+            }
+        )
+    return sorted(ratios, key=lambda item: (item["shape"], item["compression"]))
+
+
 async def run(args: argparse.Namespace) -> dict[str, object]:
+    pure_python_provenance = None
     if args.pure_python_python:
-        check_pure_python(args.pure_python_python)
+        pure_python_provenance = check_pure_python(args.pure_python_python)
     source_provenance = None
     if args.source_driver_python:
         source_provenance = check_source_driver(
@@ -317,6 +469,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
     snapshot = await server_snapshot(args.dsn)
     tables = table_names(args)
     results: list[dict[str, object]] = []
+    correctness_gate: list[dict[str, object]] = []
     drivers = ["asynch", "clickhouse_driver_cython"]
     if args.source_driver_python:
         drivers.append("clickhouse_driver_source_c_extension")
@@ -324,6 +477,8 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
         drivers.append("clickhouse_driver_pure_python")
     try:
         await prepare_tables(args)
+        if args.pure_python_python:
+            correctness_gate = await verify_pure_python_results(args, tables)
         for compression in args.compression:
             dsn = update_compression(args.dsn, compression)
             for shape, table in tables.items():
@@ -382,6 +537,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
     finally:
         if not args.keep_tables:
             await cleanup_tables(args.dsn, tuple(tables.values()))
+    ratio_table = retention_ratios(results)
     return {
         "benchmark": "single_query_throughput",
         "environment": {
@@ -392,32 +548,39 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
             "compression": args.compression,
             "rounds": args.rounds,
             "pure_python_python": str(args.pure_python_python) if args.pure_python_python else None,
+            "pure_python_provenance": pure_python_provenance,
             "source_driver_python": str(args.source_driver_python)
             if args.source_driver_python
             else None,
             "source_driver_provenance": source_provenance,
         },
+        "correctness_gate": correctness_gate,
         "results": results,
+        "retention_ratios": ratio_table,
     }
 
 
-def emit(result: dict[str, object], as_json: bool) -> None:
-    if as_json:
-        print(json.dumps(result, sort_keys=True))  # noqa: T201
-        return
+def text_report(result: dict[str, object]) -> str:
+    lines = []
     environment = result["environment"]
-    print("WP01 single-query throughput benchmark")  # noqa: T201
-    print(  # noqa: T201
+    lines.append("WP07 single-query throughput benchmark")
+    lines.append(
         "environment: ClickHouse={version} revision={revision}; Python={python}; rows={rows}; "
         "seed={seed}; compression={compression}; rounds={rounds} (+1 warmup); "
-        "source_driver_python={source_driver_python}; pure_python_python={pure_python_python}".format(
-            **environment
+        "source_driver_python={source_driver_python}; "
+        "pure_python_python={pure_python_python}".format(**environment)
+    )
+    lines.append(
+        "pure-Python correctness gate: "
+        + ", ".join(
+            "{shape}/{compression} rows={rows} passed={passed}".format(**item)
+            for item in result["correctness_gate"]
         )
     )
     for item in result["results"]:
         throughput = item["throughput_rows_per_sec"]
         elapsed = item["elapsed_s"]
-        print(  # noqa: T201
+        lines.append(
             "driver={driver} shape={shape} compression={compression} rows/sec "
             "p50={p50:.3f} p90={p90:.3f} p99={p99:.3f} max={max:.3f} raw={raw}; "
             "elapsed_s p50={elapsed_p50:.6f} p90={elapsed_p90:.6f} "
@@ -430,6 +593,23 @@ def emit(result: dict[str, object], as_json: bool) -> None:
                 elapsed_max=elapsed["max"],
             )
         )
+    for ratio in result["retention_ratios"]:
+        lines.append(
+            "shape={shape} compression={compression} R_decython={r_decython:.6f} "
+            "R_async={r_async:.6f} asynch/wheel={asynch_over_wheel:.6f} "
+            "identity_delta={identity_absolute_delta:.12f}".format(**ratio)
+        )
+    return "\n".join(lines) + "\n"
+
+
+def emit(result: dict[str, object], as_json: bool, text_output: Optional[Path]) -> None:
+    report = text_report(result)
+    if text_output:
+        text_output.write_text(report, encoding="utf-8")
+    if as_json:
+        print(json.dumps(result, sort_keys=True))  # noqa: T201
+    else:
+        print(report, end="")  # noqa: T201
 
 
 def parse_args() -> argparse.Namespace:
@@ -440,13 +620,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--table-prefix", type=validate_identifier, default="wp01_bench")
     parser.add_argument("--compression", type=csv_strings, default=["off", "lz4"])
     parser.add_argument("--rounds", type=int, default=5)
-    comparison = parser.add_mutually_exclusive_group(required=True)
-    comparison.add_argument("--pure-python-python", type=Path)
-    comparison.add_argument("--source-driver-python", type=Path)
+    parser.add_argument("--pure-python-python", type=Path)
+    parser.add_argument("--source-driver-python", type=Path)
     parser.add_argument("--source-driver-revision")
     parser.add_argument("--keep-tables", action="store_true")
     parser.add_argument("--json", action="store_true", dest="as_json")
+    parser.add_argument("--text-output", type=Path)
     args = parser.parse_args()
+    if not args.pure_python_python and not args.source_driver_python:
+        parser.error("one of --pure-python-python or --source-driver-python is required")
     if args.source_driver_python and not args.source_driver_revision:
         parser.error("--source-driver-revision is required with --source-driver-python")
     if args.source_driver_revision and not args.source_driver_python:
@@ -463,7 +645,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     try:
-        emit(asyncio.run(run(args)), args.as_json)
+        emit(asyncio.run(run(args)), args.as_json, args.text_output)
     except Exception as error:
         print(f"benchmark error: {error}", file=sys.stderr)  # noqa: T201
         raise SystemExit(1) from error
