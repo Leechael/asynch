@@ -179,7 +179,7 @@ jobs:
 
   wp01-benchmarks:
     if: ${{ inputs.wp01_benchmark == true }}
-    name: Manual WP01 D/A/C measurement
+    name: Manual WP01 D/A/B/C measurement
     runs-on: ubuntu-latest
     timeout-minutes: 60
     services:
@@ -232,6 +232,29 @@ jobs:
         run: |
           python -m benchmarks.bench_loop_lag --rows "$WP01_ROWS" --json \
             > benchmarks/results/workflow/loop-lag.json
+      - name: Run pool-level concurrency matrix
+        env:
+          CLICKHOUSE_DSN: clickhouse://default:@127.0.0.1:9000/default
+          WP01_ROWS: ${{ inputs.wp01_rows }}
+        run: |
+          python -m benchmarks.bench_concurrency \
+            --rtt-ms 0 --workers 1,8,32,128 --iterations 5 --rounds 5 \
+            --seed 20260712 --json \
+            > benchmarks/results/workflow/concurrency-rtt-0ms.json
+
+          python -m benchmarks._proxy --listen 19000 --target 127.0.0.1:9000 \
+            --delay-ms 2.5 &
+          proxy_pid=$!
+          trap 'kill "$proxy_pid" 2>/dev/null || true' EXIT
+          sleep 1
+          CLICKHOUSE_DSN='clickhouse://default:@127.0.0.1:19000/default' \
+            python -m benchmarks.bench_concurrency \
+              --rtt-ms 5 --workers 1,8,32,128 --iterations 5 --rounds 5 \
+              --seed 20260712 --json \
+              > benchmarks/results/workflow/concurrency-rtt-5ms.json
+          kill "$proxy_pid"
+          wait "$proxy_pid" || true
+          trap - EXIT
       - name: Build no-Cython source clickhouse-driver
         run: |
           git clone https://github.com/mymarilyn/clickhouse-driver.git /tmp/clickhouse-driver

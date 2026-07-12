@@ -157,6 +157,8 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
         "environment": {
             **snapshot,
             "python": sys.version.split()[0],
+            "injected_rtt_ms": args.rtt_ms,
+            "seed": args.seed,
             "workers": args.workers,
             "iterations": args.iterations,
             "rounds": args.rounds,
@@ -174,9 +176,8 @@ def emit(result: dict[str, object], as_json: bool) -> None:
     print("WP01 pool-level concurrency benchmark")  # noqa: T201
     print(  # noqa: T201
         "environment: ClickHouse={version} revision={revision}; Python={python}; "
-        "workers={workers}; iterations={iterations}; rounds={rounds} (+1 warmup)".format(
-            **environment
-        )
+        "injected_rtt_ms={injected_rtt_ms:g}; seed={seed}; workers={workers}; "
+        "iterations={iterations}; rounds={rounds} (+1 warmup)".format(**environment)
     )
     print(f"scope: {result['scope']}")  # noqa: T201
     for configuration in result["configurations"]:
@@ -197,13 +198,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dsn", default=default_dsn())
     parser.add_argument("--workers", type=csv_ints, default=[1, 10, 50, 100])
     parser.add_argument("--iterations", type=int, default=20)
+    parser.add_argument("--seed", type=int, default=20260712)
     parser.add_argument("--rounds", type=int, default=5)
+    parser.add_argument(
+        "--rtt-ms",
+        type=float,
+        required=True,
+        help="configured round-trip latency for this proxy run; use 2 * proxy --delay-ms",
+    )
     parser.add_argument("--json", action="store_true", dest="as_json")
     args = parser.parse_args()
     if args.rounds < 5:
         parser.error("--rounds must be at least 5")
     if args.iterations < 1:
         parser.error("--iterations must be positive")
+    if args.rtt_ms < 0:
+        parser.error("--rtt-ms must be non-negative")
     return args
 
 

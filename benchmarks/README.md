@@ -75,14 +75,22 @@ protocol concurrency.
 ## Pool-level concurrency (B)
 
 ```bash
-python -m benchmarks.bench_concurrency
+python -m benchmarks.bench_concurrency \
+  --rtt-ms 0 --workers 1,8,32,128 --iterations 5 --seed 20260712
 ```
+
+Run B directly for 0 ms RTT. For 5 ms RTT, run `_proxy.py` with
+`--delay-ms 2.5`, point `CLICKHOUSE_DSN` at the proxy, and pass `--rtt-ms 5`.
+Each configuration uses one warmup plus five measured rounds.
 
 This is deliberately a comparison of Pool-managed coroutines against
 `clickhouse-driver` worker threads. Every worker owns one connection for an
 entire timed round; the output reports aggregate QPS and per-query
-p50/p90/p99/max with raw samples. It is not an experiment in single-connection
-concurrency or protocol multiplexing.
+p50/p90/p99/max with raw samples. B has no pass/fail verdict. Its output is the
+pre-lock-refactor QPS-ratio baseline for asynch Pool relative to the official
+synchronous driver plus threads; the same parameters will be rerun after the
+lock refactor. It is not an experiment in single-connection concurrency or
+protocol multiplexing.
 
 ## Single-query throughput (C)
 
@@ -118,8 +126,9 @@ from nonexistent single-connection protocol multiplexing.
 
 When a local ClickHouse host is unavailable, manually dispatch the existing
 `compat-nightly` workflow from the target branch with `wp01_benchmark=true`.
-That switch runs only the D/A/C measurement job—not a PR gate—and uploads raw
-JSON reports, including the no-Cython source-build C control, as an artifact.
+That switch runs only the D/A/B/C measurement job—not a PR gate—and uploads
+raw JSON reports, including the two B RTT controls and the no-Cython
+source-build C control, as an artifact.
 Download that artifact, inspect every raw distribution and conclusion, then
 commit the unchanged reports under
 `benchmarks/results/` with their measurement date.
