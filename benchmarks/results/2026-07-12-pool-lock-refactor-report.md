@@ -21,3 +21,14 @@ This hosted runner's 0 ms B medians differ materially from the historic B
 reference, so this run is retained as raw evidence but is not yet the final
 environment-comparability acceptance run. A further identical B-to-D run is
 required by the plan's ±10% rule before treating the comparison as final.
+
+## Reproducibility rerun
+
+GitHub Actions [run 29196625386](https://github.com/Leechael/asynch/actions/runs/29196625386)
+repeated the same B-to-D matrix from the identical commit. Its raw files use
+the `-rerun-` prefix. The 5 ms and 20 ms ratios again passed (D/B: 1.17x and
+1.10x at maxsize 8/32 for 5 ms; 1.05x and 1.05x for 20 ms), but the 0 ms D
+medians were 796.2 and 855.5 ops/s. Its B 0 ms medians, 889.6 and 942.7 QPS,
+were still 46% and 27% above the historic B reference. It therefore also fails
+the fixed runner-comparability guard and must not be represented as final
+acceptance evidence.
