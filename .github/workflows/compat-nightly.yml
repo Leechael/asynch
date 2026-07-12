@@ -228,8 +228,9 @@ jobs:
       - name: Run event-loop-lag matrix
         env:
           CLICKHOUSE_DSN: clickhouse://default:@127.0.0.1:9000/default
+          WP01_ROWS: ${{ inputs.wp01_rows }}
         run: |
-          python -m benchmarks.bench_loop_lag --rows "${{ inputs.wp01_rows }}" --json \
+          python -m benchmarks.bench_loop_lag --rows "$WP01_ROWS" --json \
             > benchmarks/results/workflow/loop-lag.json
       - name: Build no-Cython source clickhouse-driver
         run: |
@@ -246,13 +247,15 @@ jobs:
       - name: Run single-query source-build matrix
         env:
           CLICKHOUSE_DSN: clickhouse://default:@127.0.0.1:9000/default
+          WP01_ROWS: ${{ inputs.wp01_rows }}
         run: |
           python -m benchmarks.bench_throughput \
-            --rows "${{ inputs.wp01_rows }}" \
+            --rows "$WP01_ROWS" \
             --source-driver-python /tmp/wp01-clickhouse-driver-source/bin/python \
             --source-driver-revision 49afa09 \
             --json > benchmarks/results/workflow/throughput-source-c-extension.json
       - name: Upload raw measurement reports
+        if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: wp01-benchmark-results-${{ github.run_id }}
