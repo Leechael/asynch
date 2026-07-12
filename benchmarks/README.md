@@ -88,17 +88,20 @@ concurrency or protocol multiplexing.
 
 ```bash
 python -m benchmarks.bench_throughput \
-  --pure-python-python /path/to/verified-pure-python/bin/python
+  --source-driver-python /path/to/no-cython-source-build/bin/python
 ```
 
 C compares asynch, the installed `clickhouse-driver` Cython extension build,
-and a separately supplied interpreter that has a real pure-Python
-`clickhouse-driver` fallback. It covers wide Int64, String, Nullable, and
-LowCardinality shapes with compression off/lz4. The supplied interpreter is
-checked for all four upstream extension modules before any measurement starts.
-A `--no-binary clickhouse-driver` source installation is not accepted merely by
-name: upstream 0.2.10 builds its bundled C sources when those extensions are
-available, so the script fails rather than mislabel that build as pure Python.
+and a separately supplied `clickhouse-driver` source build made without a
+Cython compiler. It covers wide Int64, String, Nullable, and LowCardinality
+shapes with compression off/lz4. The latter remains a C-extension build and is
+labeled `source_c_extension` in output; it is useful for the plan's
+`--no-binary` control, but is never described as pure Python.
+
+If a real pure-Python fallback becomes available, pass
+`--pure-python-python` instead. Upstream 0.2.10 builds bundled C sources even
+from `--no-binary` source installs, so the script refuses to mislabel that
+build as pure Python.
 
 ## Results
 
@@ -111,7 +114,8 @@ from nonexistent single-connection protocol multiplexing.
 
 When a local ClickHouse host is unavailable, manually dispatch the existing
 `compat-nightly` workflow from the target branch with `wp01_benchmark=true`.
-That switch runs only the D/A measurement job—not a PR gate—and uploads raw
-JSON reports as an artifact. Download that artifact, inspect every raw
-distribution and conclusion, then commit the unchanged reports under
+That switch runs only the D/A/C measurement job—not a PR gate—and uploads raw
+JSON reports, including the no-Cython source-build C control, as an artifact.
+Download that artifact, inspect every raw distribution and conclusion, then
+commit the unchanged reports under
 `benchmarks/results/` with their measurement date.

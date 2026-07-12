@@ -67,6 +67,40 @@ finally:
     client.disconnect()
 """
 
+SOURCE_DRIVER_PROBE = r"""
+import importlib.machinery
+import json
+import clickhouse_driver.bufferedreader as bufferedreader
+import clickhouse_driver.bufferedwriter as bufferedwriter
+import clickhouse_driver.columns.largeint as largeint
+import clickhouse_driver.varint as varint
+
+modules = (bufferedreader, bufferedwriter, largeint, varint)
+suffixes = importlib.machinery.EXTENSION_SUFFIXES
+extensions = [module.__file__ for module in modules if module.__file__.endswith(tuple(suffixes))]
+if len(extensions) != 4:
+    raise SystemExit("source comparison must expose all four clickhouse-driver extension modules")
+print(json.dumps({"source_c_extensions": extensions}))
+"""
+
+SOURCE_DRIVER_QUERY = r"""
+import json
+import sys
+from time import perf_counter
+
+from clickhouse_driver import Client
+
+dsn, query = sys.argv[1:]
+client = Client.from_url(dsn)
+try:
+    client.execute("SELECT 1")
+    started = perf_counter()
+    rows = client.execute(query)
+    print(json.dumps({"elapsed_s": perf_counter() - started, "rows": len(rows)}))
+finally:
+    client.disconnect()
+"""
+
 
 def distribution(values: Iterable[float]) -> dict[str, object]:
     samples = list(values)
@@ -214,12 +248,44 @@ def check_pure_python(executable: Path) -> None:
         )
 
 
+def check_source_driver(executable: Path) -> None:
+    if not executable.is_file():
+        raise ValueError(f"--source-driver-python does not point to a file: {executable}")
+    completed = subprocess.run(  # noqa: S603 -- probe the explicit interpreter
+        [str(executable), "-c", SOURCE_DRIVER_PROBE],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode:
+        message = completed.stderr.strip() or completed.stdout.strip()
+        raise RuntimeError(f"source clickhouse-driver comparison is unavailable: {message}")
+
+
+def run_source_driver(executable: Path, dsn: str, query: str) -> tuple[int, float]:
+    completed = subprocess.run(  # noqa: S603 -- explicit interpreter is verified before use
+        [str(executable), "-c", SOURCE_DRIVER_QUERY, dsn, query],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(completed.stdout)
+    return int(payload["rows"]), float(payload["elapsed_s"])
+
+
 async def run(args: argparse.Namespace) -> dict[str, object]:
-    check_pure_python(args.pure_python_python)
+    if args.pure_python_python:
+        check_pure_python(args.pure_python_python)
+    if args.source_driver_python:
+        check_source_driver(args.source_driver_python)
     snapshot = await server_snapshot(args.dsn)
     tables = await prepare_tables(args)
     results: list[dict[str, object]] = []
-    drivers = ("asynch", "clickhouse_driver_cython", "clickhouse_driver_pure_python")
+    drivers = ["asynch", "clickhouse_driver_cython"]
+    if args.source_driver_python:
+        drivers.append("clickhouse_driver_source_c_extension")
+    if args.pure_python_python:
+        drivers.append("clickhouse_driver_pure_python")
     try:
         for compression in args.compression:
             dsn = update_compression(args.dsn, compression)
@@ -230,6 +296,10 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
                         await asynch_query(dsn, query)
                     elif driver == "clickhouse_driver_cython":
                         await asyncio.to_thread(cython_query, dsn, query)
+                    elif driver == "clickhouse_driver_source_c_extension":
+                        await asyncio.to_thread(
+                            run_source_driver, args.source_driver_python, dsn, query
+                        )
                     else:
                         await asyncio.to_thread(
                             run_pure_python, args.pure_python_python, dsn, query
@@ -240,6 +310,10 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
                             rows, elapsed = await asynch_query(dsn, query)
                         elif driver == "clickhouse_driver_cython":
                             rows, elapsed = await asyncio.to_thread(cython_query, dsn, query)
+                        elif driver == "clickhouse_driver_source_c_extension":
+                            rows, elapsed = await asyncio.to_thread(
+                                run_source_driver, args.source_driver_python, dsn, query
+                            )
                         else:
                             rows, elapsed = await asyncio.to_thread(
                                 run_pure_python, args.pure_python_python, dsn, query
@@ -280,7 +354,10 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
             "seed": args.seed,
             "compression": args.compression,
             "rounds": args.rounds,
-            "pure_python_python": str(args.pure_python_python),
+            "pure_python_python": str(args.pure_python_python) if args.pure_python_python else None,
+            "source_driver_python": str(args.source_driver_python)
+            if args.source_driver_python
+            else None,
         },
         "results": results,
     }
@@ -295,7 +372,9 @@ def emit(result: dict[str, object], as_json: bool) -> None:
     print(  # noqa: T201
         "environment: ClickHouse={version} revision={revision}; Python={python}; rows={rows}; "
         "seed={seed}; compression={compression}; rounds={rounds} (+1 warmup); "
-        "pure_python_python={pure_python_python}".format(**environment)
+        "source_driver_python={source_driver_python}; pure_python_python={pure_python_python}".format(
+            **environment
+        )
     )
     for item in result["results"]:
         throughput = item["throughput_rows_per_sec"]
@@ -323,7 +402,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--table-prefix", type=validate_identifier, default="wp01_bench")
     parser.add_argument("--compression", type=csv_strings, default=["off", "lz4"])
     parser.add_argument("--rounds", type=int, default=5)
-    parser.add_argument("--pure-python-python", type=Path, required=True)
+    comparison = parser.add_mutually_exclusive_group(required=True)
+    comparison.add_argument("--pure-python-python", type=Path)
+    comparison.add_argument("--source-driver-python", type=Path)
     parser.add_argument("--keep-tables", action="store_true")
     parser.add_argument("--json", action="store_true", dest="as_json")
     args = parser.parse_args()

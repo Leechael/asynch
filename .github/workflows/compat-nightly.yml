@@ -179,7 +179,7 @@ jobs:
 
   wp01-benchmarks:
     if: ${{ inputs.wp01_benchmark == true }}
-    name: Manual WP01 D/A measurement
+    name: Manual WP01 D/A/C measurement
     runs-on: ubuntu-latest
     timeout-minutes: 60
     services:
@@ -231,6 +231,26 @@ jobs:
         run: |
           python -m benchmarks.bench_loop_lag --rows "${{ inputs.wp01_rows }}" --json \
             > benchmarks/results/workflow/loop-lag.json
+      - name: Build no-Cython source clickhouse-driver
+        run: |
+          git clone https://github.com/mymarilyn/clickhouse-driver.git /tmp/clickhouse-driver
+          git -C /tmp/clickhouse-driver checkout 49afa09
+          python -m venv /tmp/wp01-clickhouse-driver-source
+          /tmp/wp01-clickhouse-driver-source/bin/python -m pip install --upgrade pip
+          /tmp/wp01-clickhouse-driver-source/bin/python -m pip install '/tmp/clickhouse-driver[lz4]'
+          /tmp/wp01-clickhouse-driver-source/bin/python - <<'PY'
+          import importlib.util
+
+          assert importlib.util.find_spec("Cython") is None
+          PY
+      - name: Run single-query source-build matrix
+        env:
+          CLICKHOUSE_DSN: clickhouse://default:@127.0.0.1:9000/default
+        run: |
+          python -m benchmarks.bench_throughput \
+            --rows "${{ inputs.wp01_rows }}" \
+            --source-driver-python /tmp/wp01-clickhouse-driver-source/bin/python \
+            --json > benchmarks/results/workflow/throughput-source-c-extension.json
       - name: Upload raw measurement reports
         uses: actions/upload-artifact@v4
         with:
