@@ -253,16 +253,19 @@ class Pool:
                     logger.debug("idle connection %s failed its checkout ping", conn, exc_info=True)
                     await self._discard_acquired_connection(conn)
                     continue
+                async with self._lock:
+                    if (
+                        candidate_generation == self._generation
+                        and not self._closed
+                        and conn in self._acquired_connections
+                    ):
+                        return conn
+                await self._discard_connection(conn)
+                raise AsynchPoolError(f"{self} was closed while acquiring a connection")
 
-            async with self._lock:
-                if (
-                    candidate_generation == self._generation
-                    and not self._closed
-                    and conn in self._acquired_connections
-                ):
-                    return conn
-            await self._discard_connection(conn)
-            raise AsynchPoolError(f"{self} was closed while acquiring a connection")
+            # The common checkout path has no await after the synchronous
+            # ownership transfer, so shutdown cannot interleave here.
+            return conn
 
     async def _release_connection(self, conn: Connection) -> None:
         # As on acquire, the lock only protects synchronous ownership updates.
