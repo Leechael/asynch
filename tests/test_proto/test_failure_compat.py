@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from asynch.errors import ChecksumDoesntMatchError
+from asynch.errors import ChecksumDoesntMatchError, SocketTimeoutError
 from asynch.proto.compression import import_cityhash
 from asynch.proto.compression.lz4 import Compressor as LZ4Compressor
 from asynch.proto.connection import Connection as ProtoConnection
@@ -49,8 +49,10 @@ async def test_receive_packet_honors_send_receive_timeout():
 
     conn._receive_packet_impl = never_returns
 
-    with pytest.raises(asyncio.TimeoutError):
+    with pytest.raises(SocketTimeoutError) as exc_info:
         await conn._receive_packet()
+
+    assert isinstance(exc_info.value.__cause__, asyncio.TimeoutError)
 
 
 async def test_ping_honors_sync_request_timeout():
