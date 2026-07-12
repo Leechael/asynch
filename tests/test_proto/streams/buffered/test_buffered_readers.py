@@ -5,6 +5,7 @@ import pytest
 from asynch.proto.compression import import_cityhash
 from asynch.proto.compression.lz4 import Compressor as LZ4Compressor
 from asynch.proto.protocol import CompressionMethodByte
+from asynch.proto.result import ClientTimings
 from asynch.proto.streams.buffered import (
     BufferedReader,
     BufferedWriter,
@@ -91,3 +92,32 @@ async def test_compressed_reader_does_not_double_count_raw_socket_reads():
     assert metrics.socket_reads == 1
     assert metrics.bytes_read == len(frame)
     assert metrics.network_wait >= 0
+
+
+async def test_compressed_reader_records_compressed_timing_and_sizes():
+    data = b"compressed timing metrics"
+    compressor_writer = BufferedWriter()
+    await compressor_writer.write_bytes(data)
+    compressor = LZ4Compressor(compressor_writer)
+    payload = bytearray([CompressionMethodByte.LZ4])
+    payload.extend(await compressor.get_compressed_data(extra_header_size=1))
+
+    frame_writer = BufferedWriter()
+    await frame_writer.write_uint128(import_cityhash()(payload))
+    await frame_writer.write_bytes(payload)
+    frame = frame_writer.buffer
+
+    stream_reader = StreamReader()
+    stream_reader.feed_data(frame)
+    stream_reader.feed_eof()
+    raw_metrics = ReaderMetrics()
+    raw_reader = BufferedReader(stream_reader, buffer_max_size=len(frame), metrics=raw_metrics)
+    reader = CompressedBufferedReader(raw_reader, stream_reader)
+    timings = ClientTimings()
+    reader.timings = timings
+
+    assert await reader.read_bytes(len(data)) == data
+    assert timings.decompress >= 0
+    assert timings.bytes_compressed == len(payload) - 5
+    assert timings.bytes_raw == len(data)
+    assert raw_metrics.network_wait >= 0

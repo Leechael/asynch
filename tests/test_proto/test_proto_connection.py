@@ -10,14 +10,14 @@ import pytest
 
 from asynch.errors import ErrorCode, NetworkError, ServerException, SocketTimeoutError
 from asynch.proto.block import RowOrientedBlock
-from asynch.proto.connection import (
-    SUBSTITUTE_PARAMS_STYLE_ENV,
-)
+from asynch.proto.connection import METRICS_ENV, SUBSTITUTE_PARAMS_STYLE_ENV
 from asynch.proto.connection import (
     Connection as ProtoConnection,
 )
 from asynch.proto.cs import ServerInfo
 from asynch.proto.protocol import ServerPacket
+from asynch.proto.result import ClientTimings, QueryInfo
+from asynch.proto.streams.buffered import ReaderMetrics
 
 
 @pytest.fixture()
@@ -181,6 +181,63 @@ async def test_execute_with_missing_arg(proto_conn: ProtoConnection):
     query = "SELECT %(var)s"
     with pytest.raises(KeyError, match="'var'"):
         await proto_conn.execute(query, args={"foo": 1})
+
+
+@pytest.mark.no_clickhouse
+@pytest.mark.parametrize(
+    ("environment", "expected"),
+    [("1", True), ("true", True), ("ON", True), ("0", False)],
+)
+def test_metrics_environment_enablement(monkeypatch, environment, expected):
+    monkeypatch.setenv(METRICS_ENV, environment)
+
+    assert ProtoConnection().metrics_enabled is expected
+    assert ProtoConnection(metrics=not expected).metrics_enabled is not expected
+
+
+@pytest.mark.no_clickhouse
+async def test_receive_data_records_client_timings():
+    conn = ProtoConnection(metrics=True)
+    reader_metrics = ReaderMetrics()
+    conn.reader = Mock(metrics=reader_metrics)
+    conn.server_info = Mock(used_revision=0)
+    block = RowOrientedBlock(
+        columns_with_types=[("value", "UInt8")],
+        data=[(1,), (2,)],
+    )
+
+    async def read_block():
+        reader_metrics.network_wait += 0.1
+        reader_metrics.bytes_read += 9
+        return block
+
+    conn.block_reader = Mock(read=AsyncMock(side_effect=read_block))
+    conn.last_query = QueryInfo(conn.reader, client_timings=ClientTimings())
+
+    assert await conn.receive_data() is block
+    timings = conn.last_query.client_timings
+    assert timings.network_wait == 0.1
+    assert timings.blocks == 1
+    assert timings.rows == 2
+    assert timings.bytes_raw == 9
+    assert timings.decode >= 0
+    assert timings.max_block_decode == timings.decode
+
+
+@pytest.mark.no_clickhouse
+async def test_first_data_packet_records_ttfb():
+    conn = ProtoConnection(metrics=True)
+    conn.reader = Mock(read_varint=AsyncMock(return_value=ServerPacket.DATA))
+    conn.last_query = QueryInfo(conn.reader, client_timings=ClientTimings())
+    conn._metrics_query_sent_at = 0.0
+    block = RowOrientedBlock()
+    conn.receive_data = AsyncMock(return_value=block)
+
+    packet = await conn._receive_packet_impl()
+
+    assert packet.block is block
+    assert conn.last_query.client_timings.ttfb >= 0
+    assert conn._metrics_query_sent_at is None
 
 
 def test_substitute_params_supports_format_style(monkeypatch):
