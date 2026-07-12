@@ -10,6 +10,11 @@ on:
         required: false
         default: false
         type: boolean
+      wp07_benchmark:
+        description: Run only the manual WP07 pure-Python C control
+        required: false
+        default: false
+        type: boolean
       wp01_rows:
         description: Rows in each deterministic A workload
         required: false
@@ -22,7 +27,7 @@ concurrency:
 
 jobs:
   old-servers:
-    if: ${{ inputs.wp01_benchmark != true }}
+    if: ${{ inputs.wp01_benchmark != true && inputs.wp07_benchmark != true }}
     name: Python 3.13 / CH ${{ matrix.name }}
     runs-on: ubuntu-latest
     strategy:
@@ -67,7 +72,7 @@ jobs:
         run: PYTHONDEVMODE=1 PYTHONTRACEMALLOC=1 pytest
 
   python-versions:
-    if: ${{ inputs.wp01_benchmark != true }}
+    if: ${{ inputs.wp01_benchmark != true && inputs.wp07_benchmark != true }}
     name: Python ${{ matrix.python }} / CH latest
     runs-on: ubuntu-latest
     strategy:
@@ -104,7 +109,7 @@ jobs:
         run: PYTHONDEVMODE=1 PYTHONTRACEMALLOC=1 pytest
 
   zstd-suite:
-    if: ${{ inputs.wp01_benchmark != true }}
+    if: ${{ inputs.wp01_benchmark != true && inputs.wp07_benchmark != true }}
     name: Full suite over zstd
     runs-on: ubuntu-latest
     services:
@@ -138,7 +143,7 @@ jobs:
         run: PYTHONDEVMODE=1 PYTHONTRACEMALLOC=1 pytest
 
   without-cityhash:
-    if: ${{ inputs.wp01_benchmark != true }}
+    if: ${{ inputs.wp01_benchmark != true && inputs.wp07_benchmark != true }}
     name: Compression dependency absent
     runs-on: ubuntu-latest
     env:
@@ -158,7 +163,7 @@ jobs:
         run: pytest tests/test_proto/test_failure_compat.py::test_cityhash_dependency_contract
 
   tls:
-    if: ${{ inputs.wp01_benchmark != true }}
+    if: ${{ inputs.wp01_benchmark != true && inputs.wp07_benchmark != true }}
     name: TLS handshake and compression
     runs-on: ubuntu-latest
     steps:
@@ -178,7 +183,7 @@ jobs:
         run: pytest tests/test_compat_matrix.py::test_real_tls_handshake
 
   wp01-benchmarks:
-    if: ${{ inputs.wp01_benchmark == true }}
+    if: ${{ inputs.wp01_benchmark == true || inputs.wp07_benchmark == true }}
     name: Manual WP01 D/A/B/C and WP07 pure-Python measurement
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -204,6 +209,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install ".[compression]" clickhouse-driver
       - name: Run pool-contention matrix
+        if: ${{ inputs.wp01_benchmark == true }}
         env:
           CLICKHOUSE_DSN: clickhouse://default:@127.0.0.1:9000/default
         run: |
@@ -226,6 +232,7 @@ jobs:
             trap - EXIT
           done
       - name: Run event-loop-lag matrix
+        if: ${{ inputs.wp01_benchmark == true }}
         env:
           CLICKHOUSE_DSN: clickhouse://default:@127.0.0.1:9000/default
           WP01_ROWS: ${{ inputs.wp01_rows }}
@@ -233,6 +240,7 @@ jobs:
           python -m benchmarks.bench_loop_lag --rows "$WP01_ROWS" --json \
             > benchmarks/results/workflow/loop-lag.json
       - name: Run pool-level concurrency matrix
+        if: ${{ inputs.wp01_benchmark == true }}
         env:
           CLICKHOUSE_DSN: clickhouse://default:@127.0.0.1:9000/default
         run: |
