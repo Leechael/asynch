@@ -271,6 +271,19 @@ async def test_receive_data_records_client_timings():
 
 
 @pytest.mark.no_clickhouse
+async def test_execute_client_timings_do_not_exceed_elapsed():
+    conn = ProtoConnection(metrics=True)
+    conn.reader = Mock()
+    conn.force_connect = AsyncMock()
+    conn.process_ordinary_query = AsyncMock(return_value=[])
+
+    assert await conn.execute("SELECT 1") == []
+    timings = conn.last_query.client_timings
+    assert timings is not None
+    assert timings.network_wait + timings.decode <= conn.last_query.elapsed
+
+
+@pytest.mark.no_clickhouse
 async def test_packet_generator_yields_to_the_event_loop_after_data_blocks():
     conn = ProtoConnection()
     packet = Packet()
