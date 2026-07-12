@@ -17,6 +17,7 @@ from asynch.errors import (
     NetworkError,
     PartiallyConsumedQueryError,
     ServerException,
+    SocketTimeoutError,
     UnexpectedPacketFromServerError,
     UnknownPacketFromServerError,
 )
@@ -594,9 +595,16 @@ class Connection:
             return True
 
     async def _receive_packet(self):
-        return await asyncio.wait_for(
-            self._receive_packet_impl(), timeout=self.send_receive_timeout
-        )
+        try:
+            return await asyncio.wait_for(
+                self._receive_packet_impl(), timeout=self.send_receive_timeout
+            )
+        except asyncio.TimeoutError as e:
+            await self.disconnect()
+            raise SocketTimeoutError(str(e)) from e
+        except (ConnectionError, OSError) as e:
+            await self.disconnect()
+            raise NetworkError(str(e)) from e
 
     async def _receive_packet_impl(self):
         packet = Packet()
@@ -867,7 +875,9 @@ class Connection:
                 await self.disconnect()
                 logger.warning("Failed to connect to %s:%s", host, port, exc_info=True)
         if err is not None:
-            raise err
+            if isinstance(err, asyncio.TimeoutError):
+                raise SocketTimeoutError(str(err)) from err
+            raise NetworkError(str(err)) from err
 
     async def execute(
         self,

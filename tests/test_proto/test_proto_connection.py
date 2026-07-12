@@ -1,3 +1,4 @@
+import asyncio
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -6,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from asynch.errors import ErrorCode, ServerException
+from asynch.errors import ErrorCode, NetworkError, ServerException, SocketTimeoutError
 from asynch.proto.block import RowOrientedBlock
 from asynch.proto.connection import (
     SUBSTITUTE_PARAMS_STYLE_ENV,
@@ -88,6 +89,46 @@ async def test_ping_raise_other_runtime_errors(proto_conn: ProtoConnection):
         with pytest.raises(RuntimeError, match="Any exception"):
             await proto_conn.ping()
         mock.assert_called_once()
+
+
+@pytest.mark.no_clickhouse
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (OSError("network unavailable"), NetworkError),
+        (asyncio.TimeoutError("connect timed out"), SocketTimeoutError),
+    ],
+)
+async def test_connect_remaps_network_errors_inv_e1(error, expected):
+    conn = ProtoConnection()
+    conn._init_connection = AsyncMock(side_effect=error)
+
+    with pytest.raises(expected) as exc_info:
+        await conn.connect()
+
+    assert exc_info.value.__cause__ is error
+
+
+@pytest.mark.no_clickhouse
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (OSError("network unavailable"), NetworkError),
+        (asyncio.TimeoutError("read timed out"), SocketTimeoutError),
+    ],
+)
+async def test_receive_packet_remaps_network_errors_inv_e1(error, expected):
+    conn = ProtoConnection()
+    conn._receive_packet_impl = AsyncMock(side_effect=error)
+    conn.disconnect = AsyncMock()
+
+    with pytest.raises(expected) as exc_info:
+        await conn._receive_packet()
+
+    assert exc_info.value.__cause__ is error
+    conn.disconnect.assert_awaited_once()
 
 
 @pytest.mark.asyncio
