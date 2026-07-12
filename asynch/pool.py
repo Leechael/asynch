@@ -52,6 +52,10 @@ class Pool:
         self._acquired_connections: set[Connection] = set()
         self._free_connections: deque[Connection] = deque(maxlen=maxsize)
         self._idle_since: dict[Connection, float] = {}
+        self._pending_connections = 0
+        self._generation = 0
+        self._state_changed = asyncio.Event()
+        self._startup_event: Optional[asyncio.Event] = None
         self._clock: Callable[[], float] = perf_counter
         self._opened: bool = False
         self._closed: bool = False
@@ -145,6 +149,29 @@ class Pool:
         self._free_connections.append(conn)
         self._idle_since[conn] = self._clock()
 
+    def _notify_state_changed(self) -> None:
+        """Wake capacity waiters while the lock is held."""
+
+        event = self._state_changed
+        self._state_changed = asyncio.Event()
+        event.set()
+
+    def _reserve_connection_slots(self, n: int) -> Optional[int]:
+        """Reserve physical-connection capacity while the lock is held."""
+
+        if self._closed:
+            raise AsynchPoolError(f"{self} is closed")
+        if (self._pool_size + self._pending_connections + n) > self.maxsize:
+            return None
+        self._pending_connections += n
+        return self._generation
+
+    def _finish_connection_reservation(self, n: int) -> None:
+        """Release a completed reservation while the lock is held."""
+
+        self._pending_connections -= n
+        self._notify_state_changed()
+
     def _remove_acquired_connection(self, conn: Connection) -> bool:
         """Remove a borrowed connection while the lock is held."""
 
@@ -188,12 +215,30 @@ class Pool:
             # below must never be performed while holding the pool lock.
             async with self._lock:
                 candidate = self._take_free_connection()
+                reservation = None
+                wait_event = None
+                if candidate is None:
+                    reservation = self._reserve_connection_slots(1)
+                    if reservation is None:
+                        wait_event = self._state_changed
 
             if candidate is None:
-                conn = await self._new_connection()
+                if wait_event is not None:
+                    await wait_event.wait()
+                    continue
+                try:
+                    conn = await self._new_connection()
+                except Exception:
+                    async with self._lock:
+                        self._finish_connection_reservation(1)
+                    raise
                 async with self._lock:
-                    self._acquired_connections.add(conn)
-                return conn
+                    self._finish_connection_reservation(1)
+                    if reservation == self._generation and not self._closed:
+                        self._acquired_connections.add(conn)
+                        return conn
+                await self._discard_connection(conn)
+                raise AsynchPoolError(f"{self} was closed while creating a connection")
 
             conn, idle_since = candidate
             if not conn.connected or conn.is_query_executing:
@@ -229,7 +274,8 @@ class Pool:
             msg = f"cannot create a negative number ({n}) of connections for {self}"
             raise ValueError(msg)
         async with self._lock:
-            if (self._pool_size + n) > self.maxsize:
+            reservation = self._reserve_connection_slots(n)
+            if reservation is None:
                 msg = f"adding {n} connections will exceed {self}'s maxsize ({self.maxsize})"
                 raise AsynchPoolError(msg)
         if not n:
@@ -240,15 +286,25 @@ class Pool:
         )
         connections = [result for result in results if isinstance(result, Connection)]
         failures = [result for result in results if isinstance(result, Exception)]
-        if strict and failures:
+        async with self._lock:
+            self._finish_connection_reservation(n)
+            keep_connections = (
+                reservation == self._generation
+                and not self._closed
+                and (not strict or not failures)
+            )
+            if keep_connections:
+                for conn in connections:
+                    self._return_free_connection(conn)
+
+        if not keep_connections:
             for conn in connections:
                 await self._discard_connection(conn)
+        if strict and failures:
             msg = f"failed to create the {n} connection(s) for the {self}"
             raise AsynchPoolError(msg) from failures[0]
-
-        for conn in connections:
-            async with self._lock:
-                self._return_free_connection(conn)
+        if reservation != self._generation or self._closed:
+            raise AsynchPoolError(f"{self} was closed while creating connections")
 
     @asynccontextmanager
     async def connection(self) -> AsyncIterator[Connection]:
@@ -276,12 +332,44 @@ class Pool:
     async def startup(self) -> "Pool":
         """Fill the pool to ``minsize`` before marking it open."""
 
-        if self._opened:
-            return self
-        await self._init_connections(self.minsize, strict=True)
         async with self._lock:
-            self._opened = True
             self._closed = False
+            if self._opened:
+                return self
+            if self._startup_event is not None:
+                startup_event = self._startup_event
+                initiator = False
+            else:
+                startup_event = asyncio.Event()
+                self._startup_event = startup_event
+                generation = self._generation
+                initiator = True
+
+        if not initiator:
+            await startup_event.wait()
+            async with self._lock:
+                startup_succeeded = self.opened
+            if startup_succeeded:
+                return self
+            raise AsynchPoolError(f"{self} startup was interrupted")
+
+        try:
+            await self._init_connections(self.minsize, strict=True)
+        except Exception:
+            async with self._lock:
+                if self._startup_event is startup_event:
+                    self._startup_event = None
+                    startup_event.set()
+            raise
+
+        async with self._lock:
+            if generation != self._generation or self._closed:
+                self._startup_event = None
+                startup_event.set()
+                raise AsynchPoolError(f"{self} startup was interrupted by shutdown")
+            self._opened = True
+            self._startup_event = None
+            startup_event.set()
         return self
 
     async def shutdown(self) -> None:
@@ -294,8 +382,10 @@ class Pool:
             self._free_connections.clear()
             self._acquired_connections.clear()
             self._idle_since.clear()
+            self._generation += 1
             self._opened = False
             self._closed = True
+            self._notify_state_changed()
 
         for conn in connections:
             await self._discard_connection(conn)

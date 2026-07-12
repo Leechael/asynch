@@ -145,6 +145,90 @@ async def test_healthy_release_performs_no_network_maintenance():
 
 @pytest.mark.no_clickhouse
 @pytest.mark.asyncio
+async def test_startup_reserves_capacity_while_connections_are_being_created():
+    pool = Pool(minsize=1, maxsize=1)
+    entered_connect = asyncio.Event()
+    finish_connect = asyncio.Event()
+    conn = Connection()
+    conn._connection.connected = True
+
+    async def delayed_connection():
+        entered_connect.set()
+        await finish_connect.wait()
+        return conn
+
+    pool._new_connection = delayed_connection
+    startup = asyncio.create_task(pool.startup())
+    await entered_connect.wait()
+    acquire = asyncio.create_task(pool._acquire_connection())
+    await asyncio.sleep(0)
+    assert not acquire.done()
+
+    finish_connect.set()
+    await startup
+    assert await acquire is conn
+    assert pool.acquired_connections == 1
+    assert pool.free_connections == 0
+
+
+@pytest.mark.no_clickhouse
+@pytest.mark.asyncio
+async def test_shutdown_discards_a_connection_created_during_checkout():
+    pool = Pool(minsize=0, maxsize=1)
+    entered_connect = asyncio.Event()
+    finish_connect = asyncio.Event()
+    conn = Connection()
+    conn._connection.connected = True
+    conn.close = AsyncMock()
+
+    async def delayed_connection():
+        entered_connect.set()
+        await finish_connect.wait()
+        return conn
+
+    pool._new_connection = delayed_connection
+    acquire = asyncio.create_task(pool._acquire_connection())
+    await entered_connect.wait()
+    await pool.shutdown()
+    finish_connect.set()
+
+    with pytest.raises(AsynchPoolError, match="closed while creating"):
+        await acquire
+    assert pool.closed is True
+    assert _get_pool_size(pool) == 0
+    conn.close.assert_awaited_once()
+
+
+@pytest.mark.no_clickhouse
+@pytest.mark.asyncio
+async def test_shutdown_wins_over_an_inflight_startup():
+    pool = Pool(minsize=1, maxsize=1)
+    entered_connect = asyncio.Event()
+    finish_connect = asyncio.Event()
+    conn = Connection()
+    conn._connection.connected = True
+    conn.close = AsyncMock()
+
+    async def delayed_connection():
+        entered_connect.set()
+        await finish_connect.wait()
+        return conn
+
+    pool._new_connection = delayed_connection
+    startup = asyncio.create_task(pool.startup())
+    await entered_connect.wait()
+    await pool.shutdown()
+    finish_connect.set()
+
+    with pytest.raises(AsynchPoolError, match="closed while creating"):
+        await startup
+    assert pool.closed is True
+    assert _get_pool_size(pool) == 0
+    conn.close.assert_awaited_once()
+
+
+@pytest.mark.no_clickhouse
+@pytest.mark.asyncio
 async def test_concurrent_borrowing_keeps_pool_size_bounded_without_leaks():
     maxsize = 4
     pool = Pool(minsize=0, maxsize=maxsize, pool_recycle=-1)
