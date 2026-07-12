@@ -215,6 +215,7 @@ class Pool:
             # below must never be performed while holding the pool lock.
             async with self._lock:
                 candidate = self._take_free_connection()
+                candidate_generation = self._generation
                 reservation = None
                 wait_event = None
                 if candidate is None:
@@ -253,7 +254,15 @@ class Pool:
                     await self._discard_acquired_connection(conn)
                     continue
 
-            return conn
+            async with self._lock:
+                if (
+                    candidate_generation == self._generation
+                    and not self._closed
+                    and conn in self._acquired_connections
+                ):
+                    return conn
+            await self._discard_connection(conn)
+            raise AsynchPoolError(f"{self} was closed while acquiring a connection")
 
     async def _release_connection(self, conn: Connection) -> None:
         # As on acquire, the lock only protects synchronous ownership updates.
