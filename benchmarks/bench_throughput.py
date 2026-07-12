@@ -603,7 +603,6 @@ def text_report(result: dict[str, object]) -> str:
                 for item in result["correctness_gate"]
             )
         )
-    )
     for item in result["results"]:
         throughput = item["throughput_rows_per_sec"]
         elapsed = item["elapsed_s"]
