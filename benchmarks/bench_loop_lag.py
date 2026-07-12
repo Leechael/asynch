@@ -137,7 +137,7 @@ async def prepare_tables(args: argparse.Namespace) -> tuple[str, str]:
     return int_table, string_table
 
 
-async def cleanup_tables(dsn: str, tables: tuple[str, str]) -> None:
+async def cleanup_tables(dsn: str, tables: Iterable[str]) -> None:
     async with Connection(dsn=dsn) as connection:
         for table in tables:
             await execute(connection, f"DROP TABLE IF EXISTS {table}")
@@ -160,12 +160,14 @@ async def measure_with_heartbeat(
     lags: list[float] = []
     task = asyncio.create_task(heartbeat(stop, interval, lags))
     await asyncio.sleep(interval * 2)
+    lags.clear()
     started = perf_counter()
     try:
         rows = await operation()
     finally:
         elapsed = perf_counter() - started
         stop.set()
+        task.cancel()
         with suppress(asyncio.CancelledError):
             await task
     if not lags:
@@ -231,17 +233,21 @@ def classify_loop_blocking(baseline: dict[str, object], foreground: dict[str, ob
 
 
 async def run(args: argparse.Namespace) -> dict[str, object]:
-    snapshot = await server_snapshot(args.dsn)
-    tables = await prepare_tables(args)
-    by_shape = {"int64": tables[0], "string": tables[1]}
     specs = scenario_specs()
     unknown = set(args.scenarios) - set(specs)
     if unknown:
         raise ValueError(f"unknown scenarios: {', '.join(sorted(unknown))}")
-    baseline_lags = await idle_baseline(args.baseline_seconds, args.heartbeat_ms / 1000)
-    baseline = distribution(baseline_lags)
+    snapshot = await server_snapshot(args.dsn)
+    tables = (
+        f"{args.table_prefix}_int64",
+        f"{args.table_prefix}_string",
+    )
     results: list[dict[str, object]] = []
     try:
+        await prepare_tables(args)
+        by_shape = {"int64": tables[0], "string": tables[1]}
+        baseline_lags = await idle_baseline(args.baseline_seconds, args.heartbeat_ms / 1000)
+        baseline = distribution(baseline_lags)
         for compression in args.compression:
             dsn = update_compression(args.dsn, compression)
             for max_block_size in args.max_block_sizes:
