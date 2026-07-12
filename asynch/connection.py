@@ -143,10 +143,16 @@ class Connection:
     async def close(self) -> None:
         """Close the connection."""
 
-        if self._closed:
-            return
-        if self._opened:
+        if self.connected:
             await self._connection.disconnect()
+        self._opened = False
+        self._closed = True
+
+    def terminate(self) -> None:
+        if self.connected:
+            self._connection.writer.writer.transport.abort()
+            self._connection.reset_state()
+            self._connection.connected = False
         self._opened = False
         self._closed = True
 

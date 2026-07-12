@@ -1,5 +1,5 @@
 import ssl
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -157,6 +157,34 @@ async def test_connect_rebuilds_wire_dead_connection_inv_s4():
     await conn.connect()
 
     conn._connection.connect.assert_awaited_once()
+
+
+@pytest.mark.no_clickhouse
+@pytest.mark.asyncio
+async def test_close_disconnects_lazily_connected_connection_inv_s3():
+    conn = Connection()
+    conn._connection.connected = True
+    conn._connection.disconnect = AsyncMock()
+
+    await conn.close()
+
+    conn._connection.disconnect.assert_awaited_once()
+    assert conn.closed is True
+
+
+@pytest.mark.no_clickhouse
+def test_terminate_aborts_connected_transport_inv_s8():
+    conn = Connection()
+    transport = Mock()
+    conn._connection.connected = True
+    conn._connection.writer = Mock(writer=Mock(transport=transport))
+
+    conn.terminate()
+    conn.terminate()
+
+    transport.abort.assert_called_once()
+    assert conn.connected is False
+    assert conn.closed is True
 
 
 @pytest.mark.asyncio
