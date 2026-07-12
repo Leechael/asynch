@@ -111,7 +111,7 @@ def main() -> None:
         command(str(args.python), "-m", "venv", str(environment))
         executable = environment / "bin" / "python"
         command(str(executable), "-m", "pip", "install", "--upgrade", "pip")
-        command(str(executable), "-m", "pip", "install", ".[lz4]", cwd=source)
+        command(str(executable), "-m", "pip", "install", "-e", ".[lz4]", cwd=source)
         print(
             json.dumps(
                 {

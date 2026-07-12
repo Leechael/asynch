@@ -22,7 +22,7 @@ python benchmarks/pure_python_driver/build_env.py --output-dir /tmp/wp07-pure-py
 ```
 
 The command clones and pins the upstream source, applies the committed patch,
-copies these modules, installs the package with the `lz4` extra, and fails
+copies these modules, installs the checkout editable with the `lz4` extra, and fails
 unless all four imports resolve to the copied `.py` files and the checkout is
 exactly at `49afa09`. It writes the interpreter path and provenance JSON to
 stdout. The CI workflow is the canonical measurement environment.
