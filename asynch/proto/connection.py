@@ -759,6 +759,11 @@ class Connection:
                 if packet is True:
                     continue
 
+                if packet.type == ServerPacket.DATA:
+                    # Awaits on already-buffered data never reach the event loop, so consecutive
+                    # buffered blocks would otherwise decode back-to-back and starve co-resident
+                    # tasks. Yielding here makes max_block_size an effective fairness knob.
+                    await asyncio.sleep(0)
                 yield packet
         except (Exception, asyncio.CancelledError, KeyboardInterrupt):
             await self.disconnect()

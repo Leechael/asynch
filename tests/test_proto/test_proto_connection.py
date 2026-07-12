@@ -10,7 +10,7 @@ import pytest
 
 from asynch.errors import ErrorCode, NetworkError, ServerException, SocketTimeoutError
 from asynch.proto.block import RowOrientedBlock
-from asynch.proto.connection import METRICS_ENV, SUBSTITUTE_PARAMS_STYLE_ENV
+from asynch.proto.connection import METRICS_ENV, SUBSTITUTE_PARAMS_STYLE_ENV, Packet
 from asynch.proto.connection import (
     Connection as ProtoConnection,
 )
@@ -268,6 +268,19 @@ async def test_receive_data_records_client_timings():
     assert timings.bytes_raw == 9
     assert timings.decode >= 0
     assert timings.max_block_decode == timings.decode
+
+
+@pytest.mark.no_clickhouse
+async def test_packet_generator_yields_to_the_event_loop_after_data_blocks():
+    conn = ProtoConnection()
+    packet = Packet()
+    packet.type = ServerPacket.DATA
+    conn.receive_packet = AsyncMock(side_effect=[packet, False])
+
+    with patch("asynch.proto.connection.asyncio.sleep", new=AsyncMock()) as sleep:
+        assert [item async for item in conn.packet_generator()] == [packet]
+
+    sleep.assert_awaited_once_with(0)
 
 
 @pytest.mark.no_clickhouse
