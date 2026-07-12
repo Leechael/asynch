@@ -236,6 +236,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--json", action="store_true", dest="as_json")
     args = parser.parse_args()
+    if len(set(args.maxsizes)) < 2:
+        parser.error("--maxsizes must contain at least two distinct values")
     if args.rounds < 5:
         parser.error("--rounds must be at least 5")
     if args.iterations < 1:
