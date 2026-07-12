@@ -24,7 +24,8 @@ class Connection:
     ):
         if dsn:
             config = parse_dsn(dsn)
-            self._connection = ProtoConnection(**config, stack_track=stack_track, **kwargs)
+            config.update(kwargs)
+            self._connection = ProtoConnection(**config, stack_track=stack_track)
             user = config.get("user", None) or user
             password = config.get("password", None) or password
             host = config.get("host", None) or host

@@ -5,12 +5,14 @@ import pytest
 
 from asynch.proto.columns import get_column_by_spec
 from asynch.proto.columns.aggregatefunctioncolumn import AggregateFunctionColumn
-from asynch.proto.columns.dynamiccolumn import DynamicColumn
-from asynch.proto.columns.jsoncolumn import JsonColumn
+from asynch.proto.columns.dynamiccolumn import DYNAMIC_SERIALIZATION_VERSION_V1, DynamicColumn
+from asynch.proto.columns.jsoncolumn import JsonColumn, _set_json_path
 from asynch.proto.columns.qbitcolumn import QBitColumn
 from asynch.proto.columns.variantcolumn import VariantColumn
 from asynch.proto.streams.buffered import BufferedWriter
 from tests.test_proto.protocol_helpers import make_buffered_reader
+
+pytestmark = pytest.mark.no_clickhouse
 
 
 def _context():
@@ -48,6 +50,42 @@ def test_complex_type_families_parse(spec, expected_type):
 
 
 @pytest.mark.asyncio
+async def test_dynamic_write_state_prefix_requires_prepare():
+    column = get_column_by_spec("Dynamic", _column_options())
+
+    with pytest.raises(RuntimeError, match="must be prepared"):
+        await column.write_state_prefix()
+
+
+def test_set_json_path_unescapes_escaped_dots_in_keys():
+    target = {}
+
+    _set_json_path(target, "user%2Ename.first", "Ada")
+    _set_json_path(target, "plain", 1)
+
+    assert target == {"user.name": {"first": "Ada"}, "plain": 1}
+
+
+@pytest.mark.asyncio
+async def test_json_uses_legacy_serialization_before_revision_54473():
+    options = _column_options()
+    options["context"].server_info.revision = 54469
+    column = get_column_by_spec("JSON", options)
+    items = [{"user": {"name": "Ada"}, "score": 10}]
+
+    column.prepare_state_prefix(items)
+    await column.write_state_prefix()
+    prefix_size = len(column.writer.buffer)
+    await column.write_data(items)
+
+    assert isinstance(column, JsonColumn)
+    assert column.write_mode == 0
+    assert bytes(column.writer.buffer[:8]) == bytes(8)
+    assert b"user.name" in column.writer.buffer[:prefix_size]
+    assert len(column.writer.buffer) > prefix_size
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "spec, items, expected",
     [
@@ -82,10 +120,33 @@ def test_complex_type_families_parse(spec, expected_type):
 async def test_complex_type_native_bytes(spec, items, expected):
     column = get_column_by_spec(spec, _column_options())
 
+    column.prepare_state_prefix(items)
     await column.write_state_prefix()
     await column.write_data(items)
 
     assert bytes(column.writer.buffer) == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "spec, items",
+    [
+        ("Array(Dynamic)", [[1, "two", True]]),
+        ("Tuple(Dynamic, Dynamic)", [(1, "two")]),
+        ("Map(String, Dynamic)", [{"one": 1, "two": "two"}]),
+        ("Dynamic", [[[1, "two"]]]),
+    ],
+)
+async def test_nested_dynamic_writes_structure_before_data(spec, items):
+    column = get_column_by_spec(spec, _column_options())
+
+    column.prepare_state_prefix(items)
+    await column.write_state_prefix()
+    prefix_size = len(column.writer.buffer)
+    await column.write_data(items)
+
+    assert prefix_size > 0
+    assert bytes(column.writer.buffer[:8]) == DYNAMIC_SERIALIZATION_VERSION_V1.to_bytes(8, "little")
 
 
 @pytest.mark.asyncio

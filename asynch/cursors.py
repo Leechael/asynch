@@ -87,10 +87,11 @@ class Cursor:
 
         execute, execute_kwargs = self._prepare(context)
 
-        response = await execute(query, args=args, with_column_types=True, **execute_kwargs)
-
-        await self._process_response(response)
-        self._end_query()
+        try:
+            response = await execute(query, args=args, with_column_types=True, **execute_kwargs)
+            await self._process_response(response)
+        finally:
+            self._end_query()
         if self._echo:
             logger.info(query)
             logger.info("%r", args)
@@ -131,10 +132,11 @@ class Cursor:
 
         execute, execute_kwargs = self._prepare(context)
 
-        response = await execute(query, args=args, **execute_kwargs)
-
-        await self._process_response(response, executemany=True)
-        self._end_query()
+        try:
+            response = await execute(query, args=args, **execute_kwargs)
+            await self._process_response(response, executemany=True)
+        finally:
+            self._end_query()
         if self._echo:
             logger.info(query)
             logger.info("%r", args)

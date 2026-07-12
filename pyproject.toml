@@ -39,7 +39,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-compression = ["clickhouse-cityhash (>=1.0.2.4,<2.0.0.0)"]
+compression = ["clickhouse-cityhash (>=1.0.2.5,<2.0.0.0)"]
 
 [project.urls]
 homepage = "https://github.com/long2ice/asynch"
@@ -84,7 +84,7 @@ warn_unused_configs = true
 addopts = [
     "-s",
     "-vvv",
-    "--maxfail=1",
+    "-rs",
     "--random-order"
 ]
 asyncio_mode = "auto"
@@ -92,7 +92,8 @@ minversion = "8.3"
 testpaths = ["tests"]
 xfail_strict = true
 markers = [
-    "no_clickhouse: tests that do not need a running ClickHouse server"
+    "no_clickhouse: tests that do not need a running ClickHouse server",
+    "latest_clickhouse: tests that require the latest ClickHouse compatibility target"
 ]
 
 [tool.ruff]

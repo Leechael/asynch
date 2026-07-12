@@ -31,6 +31,11 @@ class VariantColumn(Column):
         for column in self.nested_columns:
             await column.write_state_prefix()
 
+    def prepare_state_prefix(self, items):
+        _, nested_items = self._split_items(items)
+        for column, values in zip(self.nested_columns, nested_items):
+            column.prepare_state_prefix(values)
+
     async def write_data(self, items):
         discriminators, nested_items = self._split_items(items)
         await self.writer.write_bytes(bytes(discriminators))

@@ -119,6 +119,13 @@ def test_compression():
         parse_dsn("clickhouse://host:1234?compression=custom")
 
 
+def test_explicit_compression_overrides_dsn():
+    connection = Connection(dsn="clickhouse://host?compression=zstd", compression="lz4")
+
+    assert connection._connection.compression == Compression.ENABLED
+    assert connection._connection.compressor_cls is LZ4Compressor
+
+
 def test_client_name():
     c = Connection(dsn="clickhouse://host?client_name=native")
     assert c._connection.client_name == "ClickHouse native"

@@ -15,6 +15,8 @@ class DynamicColumn(Column):
         self.column_by_spec_getter = column_by_spec_getter
         self.column_options = dict(kwargs)
         self.variant_column = None
+        self._dynamic_specs = None
+        self._tagged_items = None
         super().__init__(**kwargs)
 
     async def read_state_prefix(self):
@@ -34,6 +36,20 @@ class DynamicColumn(Column):
 
     async def write_data(self, items):
         dynamic_specs, tagged_items = self._prepare_dynamic_items(items)
+        if self.variant_column is None:
+            raise RuntimeError("Dynamic state prefix must be prepared before writing data")
+        if dynamic_specs != self._dynamic_specs:
+            raise RuntimeError("Dynamic items changed after the state prefix was prepared")
+        await self.variant_column.write_data(tagged_items)
+
+    def prepare_state_prefix(self, items):
+        self._dynamic_specs, self._tagged_items = self._prepare_dynamic_items(items)
+
+    async def write_state_prefix(self):
+        await super().write_state_prefix()
+        if self._dynamic_specs is None:
+            raise RuntimeError("Dynamic state prefix must be prepared before writing data")
+        dynamic_specs = self._dynamic_specs
         await self.writer.write_uint64(DYNAMIC_SERIALIZATION_VERSION_V1)
         await self.writer.write_varint(len(dynamic_specs))
         await self.writer.write_varint(len(dynamic_specs))
@@ -41,8 +57,8 @@ class DynamicColumn(Column):
             await self.writer.write_str(spec)
 
         self.variant_column = self._make_variant_column(dynamic_specs)
+        self.variant_column.prepare_state_prefix(self._tagged_items)
         await self.variant_column.write_state_prefix()
-        await self.variant_column.write_data(tagged_items)
 
     async def read_data(self, n_items):
         items = await self.variant_column.read_data(n_items)

@@ -82,3 +82,14 @@ async def test_sparse_dates(conn):
         inserted = await execute(conn, f"SELECT * FROM {table}")
 
     assert inserted == data
+
+
+async def test_sparse_nullable_roundtrip(conn):
+    data = [(None,), (None,), (7,), (None,), (None,)]
+
+    async with create_sparse_table(conn, "a Nullable(Int32)") as table:
+        await execute(conn, f"INSERT INTO {table} VALUES", data)
+
+        inserted = await execute(conn, f"SELECT * FROM {table}")
+
+    assert inserted == data

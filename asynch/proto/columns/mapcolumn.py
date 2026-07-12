@@ -28,6 +28,13 @@ class MapColumn(Column):
         await self.key_column.write_state_prefix()
         await self.value_column.write_state_prefix()
 
+    def prepare_state_prefix(self, items):
+        items = [item or {} for item in items]
+        keys = [key for item in items for key in item]
+        values = [value for item in items for value in item.values()]
+        self.key_column.prepare_state_prefix(keys)
+        self.value_column.prepare_state_prefix(values)
+
     async def read_items(self, n_items):
         if not n_items:
             return [{}]

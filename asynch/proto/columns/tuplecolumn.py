@@ -71,6 +71,12 @@ class TupleColumn(Column):
         for column in self.nested_columns:
             await column.write_state_prefix()
 
+    def prepare_state_prefix(self, items):
+        prepared = [self.null_value if item is None else item for item in items]
+        fields = list(zip(*prepared)) if prepared else [[] for _ in self.nested_columns]
+        for column, values in zip(self.nested_columns, fields):
+            column.prepare_state_prefix(list(values))
+
 
 def create_tuple_column(spec, column_by_spec_getter, column_options):
     inner_spec = get_inner_spec("Tuple", spec)

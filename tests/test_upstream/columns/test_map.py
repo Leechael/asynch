@@ -7,6 +7,21 @@ from tests.test_upstream.columns._helpers import create_table, execute
 pytestmark = pytest.mark.asyncio
 
 
+@pytest.mark.parametrize(
+    ("column_type", "data"),
+    [
+        ("Map(String, Nullable(Int32))", [({"missing": None, "value": 7},)]),
+        ("Map(String, LowCardinality(String))", [({"a": "same", "b": "same"},)]),
+    ],
+)
+async def test_map_nested_value_types_roundtrip(conn, column_type, data):
+    async with create_table(conn, f"a {column_type}") as table:
+        await execute(conn, f"INSERT INTO {table} VALUES", data)
+        inserted = await execute(conn, f"SELECT * FROM {table}")
+
+    assert inserted == data
+
+
 async def test_simple(conn):
     data = [
         ({},),

@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from asynch.errors import ErrorCode, ServerException
 from asynch.proto.block import RowOrientedBlock
 from asynch.proto.connection import (
     SUBSTITUTE_PARAMS_STYLE_ENV,
@@ -338,7 +339,12 @@ async def test_watch_zero_limit(proto_conn: ProtoConnection) -> None:
     await proto_conn.execute("CREATE TABLE test.test (x Int8) ENGINE=Memory;")
     await proto_conn.execute("SET allow_experimental_live_view = 1")
     await proto_conn.execute("DROP VIEW IF EXISTS lv")
-    await proto_conn.execute("CREATE LIVE VIEW lv AS SELECT sum(x) FROM test.test")
+    try:
+        await proto_conn.execute("CREATE LIVE VIEW lv AS SELECT sum(x) FROM test.test")
+    except ServerException as exc:
+        if exc.code == ErrorCode.SYNTAX_ERROR and "LIVE VIEW" in exc.message:
+            pytest.skip("ClickHouse no longer supports LIVE VIEW")
+        raise
     await proto_conn.execute("INSERT INTO test.test VALUES (10)")
 
     results = await proto_conn.execute_iter("WATCH lv LIMIT 0")
