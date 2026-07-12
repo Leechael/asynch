@@ -1,6 +1,6 @@
 --- a/setup.py
 +++ b/setup.py
-@@ -114,7 +114,6 @@
+@@ -121,7 +121,6 @@
      },
      packages=find_packages('.', exclude=['tests*']),
      python_requires='>=3.9, <4',

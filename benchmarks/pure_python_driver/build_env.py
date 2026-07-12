@@ -22,9 +22,13 @@ MODULES = (
 
 
 def command(*args: str, cwd: Optional[Path] = None) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(  # noqa: S603 -- fixed build commands are assembled by this script
-        args, check=True, cwd=cwd, text=True, capture_output=True
+    completed = subprocess.run(  # noqa: S603 -- fixed build commands are assembled by this script
+        args, check=False, cwd=cwd, text=True, capture_output=True
     )
+    if completed.returncode:
+        detail = completed.stderr.strip() or completed.stdout.strip()
+        raise RuntimeError(f"build command failed ({' '.join(args)}): {detail}")
+    return completed
 
 
 def probe(executable: Path, source: Path) -> dict[str, object]:
