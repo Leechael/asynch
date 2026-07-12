@@ -84,6 +84,22 @@ entire timed round; the output reports aggregate QPS and per-query
 p50/p90/p99/max with raw samples. It is not an experiment in single-connection
 concurrency or protocol multiplexing.
 
+## Single-query throughput (C)
+
+```bash
+python -m benchmarks.bench_throughput \
+  --pure-python-python /path/to/verified-pure-python/bin/python
+```
+
+C compares asynch, the installed `clickhouse-driver` Cython extension build,
+and a separately supplied interpreter that has a real pure-Python
+`clickhouse-driver` fallback. It covers wide Int64, String, Nullable, and
+LowCardinality shapes with compression off/lz4. The supplied interpreter is
+checked for all four upstream extension modules before any measurement starts.
+A `--no-binary clickhouse-driver` source installation is not accepted merely by
+name: upstream 0.2.10 builds its bundled C sources when those extensions are
+available, so the script fails rather than mislabel that build as pure Python.
+
 ## Results
 
 Commit first-run reports under `benchmarks/results/` with an ISO date prefix.
