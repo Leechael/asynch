@@ -102,10 +102,75 @@ block boundaries after that change exists; it does not itself change driver
 behavior. Compressed String-heavy asynch reads are the most disruptive measured
 workload (stream p99 271.366 ms at 65409, 268.049 ms at 8192).
 
-Deferred work
--------------
+Pool-level concurrency (B)
+--------------------------
 
-These D/A conclusions unlock the planned B and C measurements. If implemented,
-B must be described only as pool-level coroutine-versus-thread overhead, never
-as protocol concurrency. C must separate the loss from removing Cython from the
-additional loss of per-value async decoding.
+Source: GitHub Actions run 29182755561 (Manual WP01 D/A/B/C measurement)
+Runner: GitHub-hosted ubuntu-latest; results are a measurement of that host,
+not a universal throughput promise.
+ClickHouse: 26.6.1.1193, revision 54511
+Python: 3.13.14
+Seed: 20260712
+Workers: 1, 8, 32, 128. Iterations: five SELECT 1 queries per worker.
+Rounds: one warmup plus five measured rounds for every configuration.
+
+B has no pass/fail verdict. It records the pre-lock-refactor QPS-ratio baseline
+for asynch Pool relative to the official synchronous clickhouse-driver plus
+threads. Each line reports aggregate QPS p50/p90/p99, followed by all five
+measured QPS rounds. The comparison is pool-level coroutine-versus-thread
+overhead only, not protocol concurrency or multiplexing.
+
+RTT 0 ms:
+  Workers 1, asynch_pool: 422.944/448.526/448.526 QPS;
+    rounds=[415.974, 448.526, 444.622, 417.448, 422.944]
+  Workers 1, sync_thread_executor: 677.818/706.427/706.427 QPS;
+    rounds=[677.818, 703.004, 676.973, 706.427, 634.275]
+  Ratio asynch/sync=0.624x.
+  Workers 8, asynch_pool: 609.539/714.444/714.444 QPS;
+    rounds=[714.444, 633.489, 553.792, 566.225, 609.539]
+  Workers 8, sync_thread_executor: 978.929/1067.521/1067.521 QPS;
+    rounds=[978.929, 913.952, 888.136, 1058.726, 1067.521]
+  Ratio asynch/sync=0.623x.
+  Workers 32, asynch_pool: 740.733/753.474/753.474 QPS;
+    rounds=[740.733, 735.422, 740.273, 753.474, 752.241]
+  Workers 32, sync_thread_executor: 1057.526/1065.562/1065.562 QPS;
+    rounds=[1057.526, 1005.264, 1043.215, 1065.562, 1064.095]
+  Ratio asynch/sync=0.700x.
+  Workers 128, asynch_pool: 744.118/749.739/749.739 QPS;
+    rounds=[721.060, 744.118, 708.267, 749.739, 744.279]
+  Workers 128, sync_thread_executor: 927.450/939.657/939.657 QPS;
+    rounds=[892.670, 928.404, 899.344, 927.450, 939.657]
+  Ratio asynch/sync=0.802x.
+
+RTT 5 ms:
+  Workers 1, asynch_pool: 44.969/45.198/45.198 QPS;
+    rounds=[45.008, 44.401, 44.969, 45.198, 44.312]
+  Workers 1, sync_thread_executor: 49.397/51.272/51.272 QPS;
+    rounds=[51.272, 49.340, 48.933, 49.811, 49.397]
+  Ratio asynch/sync=0.910x.
+  Workers 8, asynch_pool: 253.817/260.744/260.744 QPS;
+    rounds=[253.817, 253.175, 260.744, 259.728, 249.065]
+  Workers 8, sync_thread_executor: 393.650/421.073/421.073 QPS;
+    rounds=[404.466, 388.712, 393.650, 388.231, 421.073]
+  Ratio asynch/sync=0.645x.
+  Workers 32, asynch_pool: 377.202/380.585/380.585 QPS;
+    rounds=[345.886, 377.202, 368.714, 380.585, 380.196]
+  Workers 32, sync_thread_executor: 899.856/960.945/960.945 QPS;
+    rounds=[899.856, 960.945, 839.783, 830.126, 903.269]
+  Ratio asynch/sync=0.419x.
+  Workers 128, asynch_pool: 366.969/377.744/377.744 QPS;
+    rounds=[374.338, 366.969, 365.386, 377.744, 359.236]
+  Workers 128, sync_thread_executor: 879.972/885.442/885.442 QPS;
+    rounds=[879.972, 885.077, 885.442, 826.621, 866.194]
+  Ratio asynch/sync=0.417x.
+
+The two B JSON files are authoritative and retain every round and every raw
+query-latency sample. The same parameters will be rerun after the lock
+refactor.
+
+Related C report
+----------------
+
+Single-query throughput (C) is recorded separately in
+2026-07-12-wp01-throughput-source-c-extension.txt. That report keeps the
+source C-extension control distinct from per-value async decoding.
