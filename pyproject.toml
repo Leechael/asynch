@@ -1,6 +1,6 @@
 [build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
-build-backend = "poetry.core.masonry.api"
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
 
 [project]
 name = "asynch"
@@ -30,46 +30,45 @@ classifiers = [
 ]
 requires-python = ">=3.9,<4.0"
 dependencies = [
-    "ciso8601 (>=2.3.2,<3.0.0)",
-    "leb128 (>=1.0.8,<2.0.0)",
-    "lz4 (>=4.4.3,<5.0.0)",
-    "pytz (>=2025.1,<2026.0)",
-    "tzlocal (>=5.3.1,<6.0.0)",
-    "zstd (>=1.5.6.6,<2.0.0.0)",
+    "ciso8601>=2.3.2,<3.0.0",
+    "leb128>=1.0.8,<2.0.0",
+    "lz4>=4.4.3,<5.0.0",
+    "pytz>=2025.1,<2026.0",
+    "tzlocal>=5.3.1,<6.0.0",
+    "zstd>=1.5.6.6,<2.0.0.0",
 ]
 
 [project.optional-dependencies]
-compression = ["clickhouse-cityhash (>=1.0.2.5,<2.0.0.0)"]
+compression = ["clickhouse-cityhash>=1.0.2.5,<2.0.0.0"]
 
 [project.urls]
 homepage = "https://github.com/long2ice/asynch"
 repository = "https://github.com/long2ice/asynch.git"
 documentation = "https://github.com/long2ice/asynch"
 
-[tool.poetry]
-package-mode = true
-requires-poetry = ">=2.1"
-include = ["LICENSE", "README.md"]
-packages = [
-    { include = "asynch" },
-    { include = "asynch/py.typed" }
+[tool.pdm]
+distribution = true
+
+[tool.pdm.build]
+includes = ["asynch", "asynch/py.typed", "LICENSE", "README.md"]
+
+[dependency-groups]
+dev = [
+    "bandit>=1.8.3,<2.0.0",
+    "uvloop>=0.21.0,<0.22.0",
+    "clickhouse-driver>=0.2.9,<0.3.0",
 ]
-
-[tool.poetry.group.dev.dependencies]
-bandit = "^1.8.3"
-uvloop = "^0.21.0"
-clickhouse-driver = "^0.2.9"
-
-[tool.poetry.group.lint.dependencies]
-mypy = "^1.15.0"
-ruff = "^0.9.10"
-
-[tool.poetry.group.test.dependencies]
-pytest = "^8.3.5"
-pytest-asyncio = "^0.25.3"
-pytest-random-order = "^1.1.1"
-pytest-mock = "^3.14.0"
-pytest-xdist = "^3.6.1"
+lint = [
+    "mypy>=1.15.0,<2.0.0",
+    "ruff>=0.9.10,<0.10.0",
+]
+test = [
+    "pytest>=8.3.5,<9.0.0",
+    "pytest-asyncio>=0.25.3,<0.26.0",
+    "pytest-random-order>=1.1.1,<2.0.0",
+    "pytest-mock>=3.14.0,<4.0.0",
+    "pytest-xdist>=3.6.1,<4.0.0",
+]
 
 [tool.mypy]
 check_untyped_defs = true
@@ -100,6 +99,7 @@ markers = [
 indent-width = 4
 line-length = 100
 target-version = "py39"
+force-exclude = true
 
 [tool.ruff.format]
 quote-style = "double"
@@ -134,4 +134,4 @@ fixable = [
 [tool.ruff.lint.per-file-ignores]
 "asynch/proto/settings/types.py" = ["A005"]
 "benchmark/*.py" = ["ERA", "S", "T20"]
-"tests/*.py" = ["ERA", "S"]
+"tests/**/*.py" = ["ERA", "S"]
