@@ -407,9 +407,25 @@ async def verify_pure_python_results(
                 pure_python_rows, args.pure_python_python, dsn, query
             )
             if wheel_rows != pure_rows:
+                mismatch = next(
+                    (
+                        (index, wheel_row, pure_row)
+                        for index, (wheel_row, pure_row) in enumerate(zip(wheel_rows, pure_rows))
+                        if wheel_row != pure_row
+                    ),
+                    None,
+                )
+                if mismatch is None:
+                    detail = f"row counts differ: wheel={len(wheel_rows)} pure={len(pure_rows)}"
+                else:
+                    index, wheel_row, pure_row = mismatch
+                    detail = (
+                        f"first mismatch at row {index}: wheel={wheel_row!r} "
+                        f"({type(wheel_row)!r}) pure={pure_row!r} ({type(pure_row)!r})"
+                    )
                 raise RuntimeError(
                     "pure-Python correctness gate failed: "
-                    f"wheel and pure-Python rows differ for {shape} compression={compression}"
+                    f"wheel and pure-Python rows differ for {shape} compression={compression}; {detail}"
                 )
             checks.append(
                 {
