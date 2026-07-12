@@ -1,9 +1,11 @@
+import asyncio
 import ssl
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from asynch.connection import Connection
+from asynch.errors import PartiallyConsumedQueryError
 from asynch.proto.models.enums import ConnectionStatus
 
 HOST = "192.168.15.103"
@@ -252,6 +254,40 @@ async def test_connection_ping(config):
 
     with pytest.raises(ConnectionError):
         await conn.ping()
+
+
+@pytest.mark.asyncio
+async def test_single_connection_rejects_simultaneous_execute(config):
+    """A connection is intentionally single-in-flight; pools provide concurrency."""
+
+    async with Connection(dsn=config.dsn) as conn:
+        loop = asyncio.get_running_loop()
+        second_failure_delay = None
+
+        async def first_execute():
+            return await conn._connection.execute("SELECT sleep(0.2)")
+
+        async def second_execute():
+            nonlocal second_failure_delay
+            for _ in range(100):
+                if conn._connection.is_query_executing:
+                    break
+                await asyncio.sleep(0)
+            else:
+                raise AssertionError("first execute did not become in-flight")
+            started = loop.time()
+            with pytest.raises(PartiallyConsumedQueryError):
+                await conn._connection.execute("SELECT 1")
+            second_failure_delay = loop.time() - started
+
+        first_result, second_result = await asyncio.gather(
+            first_execute(), second_execute(), return_exceptions=True
+        )
+
+    assert first_result == [(0,)]
+    assert second_result is None
+    assert second_failure_delay is not None
+    assert second_failure_delay < 0.1
 
     async with conn:
         await conn.ping()
