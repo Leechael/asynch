@@ -20,6 +20,21 @@ from asynch.proto.streams.buffered import (
 pytestmark = pytest.mark.no_clickhouse
 
 
+async def test_force_connect_probes_before_starting_query():
+    conn = ProtoConnection()
+    conn.connected = True
+
+    async def ping():
+        assert conn.is_query_executing is False
+        return True
+
+    conn.ping = AsyncMock(side_effect=ping)
+
+    await conn.force_connect()
+
+    assert conn.is_query_executing is True
+
+
 async def test_send_cancel_writes_cancel_packet():
     conn = ProtoConnection()
     conn.writer = BufferedWriter()

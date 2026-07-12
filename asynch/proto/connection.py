@@ -1054,16 +1054,20 @@ class Connection:
             self.is_query_executing = True
 
     async def force_connect(self):
-        await self.check_query_execution()
+        async with self._lock:
+            if self.is_query_executing:
+                raise PartiallyConsumedQueryError()
 
-        if not self.connected:
-            await self.connect()
+            if not self.connected:
+                await self.connect()
 
-        elif not await self.ping():
-            if self.disable_reconnect:
-                raise NetworkError("Connection was closed, reconnect is disabled.")
-            logger.info("Connection was closed, reconnecting.")
-            await self.connect()
+            elif not await self.ping():
+                if self.disable_reconnect:
+                    raise NetworkError("Connection was closed, reconnect is disabled.")
+                logger.info("Connection was closed, reconnecting.")
+                await self.connect()
+
+            self.is_query_executing = True
 
     async def process_ordinary_query(
         self,
