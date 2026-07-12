@@ -72,6 +72,18 @@ block size that does not materially improve the results supports the hypothesis
 that buffered block decoding does not yield between rows; it is not a claim of
 protocol concurrency.
 
+## Pool-level concurrency (B)
+
+```bash
+python -m benchmarks.bench_concurrency
+```
+
+This is deliberately a comparison of Pool-managed coroutines against
+`clickhouse-driver` worker threads. Every worker owns one connection for an
+entire timed round; the output reports aggregate QPS and per-query
+p50/p90/p99/max with raw samples. It is not an experiment in single-connection
+concurrency or protocol multiplexing.
+
 ## Results
 
 Commit first-run reports under `benchmarks/results/` with an ISO date prefix.
