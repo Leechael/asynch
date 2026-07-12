@@ -201,6 +201,58 @@ async def test_shutdown_discards_a_connection_created_during_checkout():
 
 @pytest.mark.no_clickhouse
 @pytest.mark.asyncio
+async def test_cancelled_checkout_releases_its_connection_reservation():
+    pool = Pool(minsize=0, maxsize=1)
+    entered_connect = asyncio.Event()
+
+    async def delayed_connection():
+        entered_connect.set()
+        await asyncio.Event().wait()
+
+    pool._new_connection = delayed_connection
+    acquire = asyncio.create_task(pool._acquire_connection())
+    await entered_connect.wait()
+    acquire.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await acquire
+    assert pool._pending_connections == 0
+
+    replacement = Connection()
+    replacement._connection.connected = True
+    pool._new_connection = AsyncMock(return_value=replacement)
+    assert await pool._acquire_connection() is replacement
+
+
+@pytest.mark.no_clickhouse
+@pytest.mark.asyncio
+async def test_cancelled_startup_unblocks_later_startup_calls():
+    pool = Pool(minsize=1, maxsize=1)
+    entered_connect = asyncio.Event()
+
+    async def delayed_connection():
+        entered_connect.set()
+        await asyncio.Event().wait()
+
+    pool._new_connection = delayed_connection
+    startup = asyncio.create_task(pool.startup())
+    await entered_connect.wait()
+    startup.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await startup
+    assert pool._pending_connections == 0
+    assert pool._startup_event is None
+
+    replacement = Connection()
+    replacement._connection.connected = True
+    pool._new_connection = AsyncMock(return_value=replacement)
+    assert await pool.startup() is pool
+    assert pool.opened is True
+
+
+@pytest.mark.no_clickhouse
+@pytest.mark.asyncio
 async def test_shutdown_wins_over_an_inflight_startup():
     pool = Pool(minsize=1, maxsize=1)
     entered_connect = asyncio.Event()

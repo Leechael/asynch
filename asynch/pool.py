@@ -199,8 +199,10 @@ class Pool:
         conn = Connection(**self._connection_kwargs)
         try:
             await conn.connect()
-        except Exception as exc:
+        except BaseException as exc:
             await self._discard_connection(conn)
+            if isinstance(exc, asyncio.CancelledError):
+                raise
             msg = f"failed to create a {conn} for {self}"
             raise AsynchPoolError(msg) from exc
         return conn
@@ -229,7 +231,7 @@ class Pool:
                     continue
                 try:
                     conn = await self._new_connection()
-                except Exception:
+                except BaseException:
                     async with self._lock:
                         self._finish_connection_reservation(1)
                     raise
@@ -293,9 +295,14 @@ class Pool:
         if not n:
             return
 
-        results = await asyncio.gather(
-            *(self._new_connection() for _ in range(n)), return_exceptions=True
-        )
+        try:
+            results = await asyncio.gather(
+                *(self._new_connection() for _ in range(n)), return_exceptions=True
+            )
+        except BaseException:
+            async with self._lock:
+                self._finish_connection_reservation(n)
+            raise
         connections = [result for result in results if isinstance(result, Connection)]
         failures = [result for result in results if isinstance(result, Exception)]
         async with self._lock:
@@ -367,7 +374,7 @@ class Pool:
 
         try:
             await self._init_connections(self.minsize, strict=True)
-        except Exception:
+        except BaseException:
             async with self._lock:
                 if self._startup_event is startup_event:
                     self._startup_event = None
