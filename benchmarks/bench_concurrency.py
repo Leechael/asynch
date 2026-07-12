@@ -46,7 +46,14 @@ async def asynch_round(dsn: str, workers: int, iterations: int) -> dict[str, obj
                 return latencies
 
         tasks = [asyncio.create_task(worker()) for _ in range(workers)]
-        await all_acquired.wait()
+        try:
+            await asyncio.wait_for(all_acquired.wait(), timeout=30)
+        except BaseException:
+            start.set()
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
         started = perf_counter()
         start.set()
         samples = await asyncio.gather(*tasks)
@@ -94,6 +101,7 @@ def sync_round(dsn: str, workers: int, iterations: int) -> dict[str, object]:
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = [executor.submit(worker) for _ in range(workers)]
         if not ready.wait(timeout=30):
+            start.set()
             raise RuntimeError("synchronous workers did not establish exclusive connections")
         started = perf_counter()
         start.set()
