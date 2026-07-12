@@ -1,7 +1,12 @@
 import pytest
 
-from asynch.errors import ServerException
+from asynch.errors import OperationalError, ServerException
 from asynch.pool import Pool
+
+
+@pytest.mark.no_clickhouse
+def test_server_exception_is_not_a_network_operational_error_inv_e2():
+    assert not issubclass(ServerException, OperationalError)
 
 
 @pytest.mark.asyncio

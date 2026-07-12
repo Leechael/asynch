@@ -1,12 +1,14 @@
+import asyncio
+import logging
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import cast
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from asynch.errors import ErrorCode, ServerException
+from asynch.errors import ErrorCode, NetworkError, ServerException, SocketTimeoutError
 from asynch.proto.block import RowOrientedBlock
 from asynch.proto.connection import (
     SUBSTITUTE_PARAMS_STYLE_ENV,
@@ -15,6 +17,7 @@ from asynch.proto.connection import (
     Connection as ProtoConnection,
 )
 from asynch.proto.cs import ServerInfo
+from asynch.proto.protocol import ServerPacket
 
 
 @pytest.fixture()
@@ -59,6 +62,24 @@ async def test_ping_processing_with_invalid_package_size(proto_conn: ProtoConnec
         assert result is False
 
 
+@pytest.mark.no_clickhouse
+@pytest.mark.asyncio
+async def test_ping_skips_socket_for_executing_query_inv_s6(caplog):
+    caplog.set_level(logging.DEBUG, logger="asynch.proto.connection")
+    conn = ProtoConnection()
+    conn.connected = True
+    conn.is_query_executing = True
+    conn.writer = Mock()
+    conn.writer.write_varint = AsyncMock()
+    conn.writer.flush = AsyncMock()
+    conn.reader = Mock(reader=Mock(at_eof=Mock(return_value=False)))
+    conn.reader.read_varint = AsyncMock(return_value=ServerPacket.PONG)
+
+    assert await conn.ping() is False
+    conn.writer.write_varint.assert_not_awaited()
+    assert "query is executing" in caplog.text
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "exception",
@@ -88,6 +109,46 @@ async def test_ping_raise_other_runtime_errors(proto_conn: ProtoConnection):
         with pytest.raises(RuntimeError, match="Any exception"):
             await proto_conn.ping()
         mock.assert_called_once()
+
+
+@pytest.mark.no_clickhouse
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (OSError("network unavailable"), NetworkError),
+        (asyncio.TimeoutError("connect timed out"), SocketTimeoutError),
+    ],
+)
+async def test_connect_remaps_network_errors_inv_e1(error, expected):
+    conn = ProtoConnection()
+    conn._init_connection = AsyncMock(side_effect=error)
+
+    with pytest.raises(expected) as exc_info:
+        await conn.connect()
+
+    assert exc_info.value.__cause__ is error
+
+
+@pytest.mark.no_clickhouse
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (OSError("network unavailable"), NetworkError),
+        (asyncio.TimeoutError("read timed out"), SocketTimeoutError),
+    ],
+)
+async def test_receive_packet_remaps_network_errors_inv_e1(error, expected):
+    conn = ProtoConnection()
+    conn._receive_packet_impl = AsyncMock(side_effect=error)
+    conn.disconnect = AsyncMock()
+
+    with pytest.raises(expected) as exc_info:
+        await conn._receive_packet()
+
+    assert exc_info.value.__cause__ is error
+    conn.disconnect.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -331,6 +392,22 @@ async def test_input_format_null_as_default(proto_conn, spec, data, expected):
                 return
 
             assert await proto_conn.execute("SELECT * FROM test.test") == expected
+
+
+@pytest.mark.asyncio
+async def test_live_view_requires_explicit_enablement(proto_conn: ProtoConnection) -> None:
+    await proto_conn.execute("DROP TABLE IF EXISTS test.test")
+    await proto_conn.execute("CREATE TABLE test.test (x Int8) ENGINE=Memory;")
+    await proto_conn.execute("SET allow_experimental_live_view = 0")
+    await proto_conn.execute("DROP VIEW IF EXISTS lv")
+    try:
+        await proto_conn.execute("CREATE LIVE VIEW lv AS SELECT sum(x) FROM test.test")
+    except ServerException as exc:
+        if exc.code == ErrorCode.SYNTAX_ERROR and "LIVE VIEW" in exc.message:
+            pytest.skip("ClickHouse no longer supports LIVE VIEW")
+        assert exc.code == ErrorCode.SUPPORT_IS_DISABLED
+    else:
+        pytest.fail("LIVE VIEW should require explicit enablement")
 
 
 @pytest.mark.asyncio

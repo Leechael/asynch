@@ -4,6 +4,7 @@ import os
 import pytest
 
 from asynch.connection import Connection
+from asynch.errors import SocketTimeoutError
 from tests.test_upstream.columns._helpers import execute
 
 pytestmark = pytest.mark.asyncio
@@ -76,9 +77,10 @@ async def test_cancelled_query_disconnects_and_reconnects(config):
 
 async def test_receive_timeout_disconnects_and_reconnects(config):
     async with Connection(**_connection_kwargs(config, send_receive_timeout=0.05)) as conn:
-        with pytest.raises(asyncio.TimeoutError):
+        with pytest.raises(SocketTimeoutError) as exc_info:
             await execute(conn, "SELECT sleep(1)")
 
+        assert isinstance(exc_info.value.__cause__, asyncio.TimeoutError)
         assert not conn._connection.connected
         assert await execute(conn, "SELECT 1") == [(1,)]
 

@@ -471,14 +471,6 @@ class TooLargeStringSize(ClickHouseException):
     code = ErrorCode.TOO_LARGE_STRING_SIZE
 
 
-class NetworkError(ClickHouseException):
-    code = ErrorCode.NETWORK_ERROR
-
-
-class SocketTimeoutError(ClickHouseException):
-    code = ErrorCode.SOCKET_TIMEOUT
-
-
 class UnknownPacketFromServerError(ClickHouseException):
     code = ErrorCode.UNKNOWN_PACKET_FROM_SERVER
 
@@ -541,6 +533,14 @@ class OperationalError(DatabaseError):
 
     It must be a subclass of DatabaseError.
     """
+
+
+class NetworkError(OperationalError):
+    code = ErrorCode.NETWORK_ERROR
+
+
+class SocketTimeoutError(OperationalError):
+    code = ErrorCode.SOCKET_TIMEOUT
 
 
 class IntegrityError(DatabaseError):

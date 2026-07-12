@@ -1,8 +1,10 @@
 import ssl
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from asynch.connection import Connection
+from asynch.proto.models.enums import ConnectionStatus
 
 HOST = "192.168.15.103"
 PORT = 10000
@@ -130,6 +132,74 @@ def test_connection_status_offline():
     assert repr(conn) == repstr
     assert not conn.opened
     assert not conn.closed
+
+
+@pytest.mark.no_clickhouse
+def test_connection_wire_liveness_contract_inv_s1_s2_s5():
+    conn = Connection()
+    conn._opened = True
+    conn._connection.connected = False
+    conn._connection.is_query_executing = True
+
+    assert conn.connected is False
+    assert conn.is_query_executing is True
+    assert conn.status == ConnectionStatus.closed
+
+
+@pytest.mark.no_clickhouse
+@pytest.mark.asyncio
+async def test_connect_rebuilds_wire_dead_connection_inv_s4():
+    conn = Connection()
+    conn._opened = True
+    conn._connection.connected = False
+    conn._connection.connect = AsyncMock()
+
+    await conn.connect()
+
+    conn._connection.connect.assert_awaited_once()
+
+
+@pytest.mark.no_clickhouse
+@pytest.mark.asyncio
+async def test_close_disconnects_lazily_connected_connection_inv_s3():
+    conn = Connection()
+    conn._connection.connected = True
+    conn._connection.disconnect = AsyncMock()
+
+    await conn.close()
+
+    conn._connection.disconnect.assert_awaited_once()
+    assert conn.closed is True
+
+
+@pytest.mark.no_clickhouse
+@pytest.mark.asyncio
+async def test_refresh_reconnects_wire_dead_connection_inv_s7():
+    conn = Connection()
+    conn._opened = True
+    conn._connection.connected = False
+    conn._connection.disconnect = AsyncMock()
+    conn._connection.connect = AsyncMock()
+
+    await conn._refresh()
+
+    conn._connection.disconnect.assert_awaited_once()
+    conn._connection.connect.assert_awaited_once()
+
+
+@pytest.mark.no_clickhouse
+def test_terminate_aborts_connected_transport_inv_s8():
+    conn = Connection()
+    transport = Mock()
+    conn._connection.connected = True
+    conn._connection.writer = Mock(writer=Mock(transport=transport))
+
+    conn.terminate()
+    conn.terminate()
+
+    transport.abort.assert_called_once()
+    assert conn.connected is False
+    assert conn.closed is True
 
 
 @pytest.mark.asyncio

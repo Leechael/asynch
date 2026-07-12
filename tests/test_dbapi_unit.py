@@ -1,7 +1,7 @@
 import asyncio
 import datetime
 import inspect
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -96,6 +96,54 @@ async def test_commit_is_noop_for_non_transactional_backend():
     conn = Connection()
 
     assert await conn.commit() is None
+
+
+@pytest.mark.asyncio
+async def test_dialect_lazy_execute_close_releases_transport_inv_s3_d1():
+    conn = Connection()
+    writer = Mock()
+    writer.close = AsyncMock()
+
+    async def execute(*args, **kwargs):
+        conn._connection.connected = True
+        conn._connection.reader = Mock()
+        conn._connection.writer = writer
+        return [], []
+
+    conn._connection.execute = AsyncMock(side_effect=execute)
+    cursor = conn.cursor()
+
+    await cursor.execute("SELECT 1")
+    await conn.close()
+
+    assert conn.opened is False
+    assert conn._connection.reader is None
+    assert conn._connection.writer is None
+    writer.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_dialect_lazy_execute_terminate_releases_transport_inv_s8_d1():
+    conn = Connection()
+    transport = Mock()
+    writer = Mock(writer=Mock(transport=transport))
+
+    async def execute(*args, **kwargs):
+        conn._connection.connected = True
+        conn._connection.reader = Mock()
+        conn._connection.writer = writer
+        return [], []
+
+    conn._connection.execute = AsyncMock(side_effect=execute)
+    cursor = conn.cursor()
+
+    await cursor.execute("SELECT 1")
+    conn.terminate()
+
+    assert conn.opened is False
+    assert conn._connection.reader is None
+    assert conn._connection.writer is None
+    transport.abort.assert_called_once()
 
 
 @pytest.mark.asyncio

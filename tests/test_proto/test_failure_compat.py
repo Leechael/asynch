@@ -6,10 +6,15 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from asynch.errors import ChecksumDoesntMatchError
+from asynch.errors import (
+    ChecksumDoesntMatchError,
+    PartiallyConsumedQueryError,
+    SocketTimeoutError,
+)
 from asynch.proto.compression import import_cityhash
 from asynch.proto.compression.lz4 import Compressor as LZ4Compressor
 from asynch.proto.connection import Connection as ProtoConnection
+from asynch.proto.context import ExecuteContext
 from asynch.proto.protocol import ClientPacket, CompressionMethodByte, ServerPacket
 from asynch.proto.streams.buffered import (
     BufferedReader,
@@ -18,6 +23,67 @@ from asynch.proto.streams.buffered import (
 )
 
 pytestmark = pytest.mark.no_clickhouse
+
+
+async def test_force_connect_probes_before_starting_query():
+    conn = ProtoConnection()
+    conn.connected = True
+
+    async def ping():
+        assert conn.is_query_executing is False
+        return True
+
+    conn.ping = AsyncMock(side_effect=ping)
+
+    await conn.force_connect()
+
+    assert conn.is_query_executing is True
+
+
+@pytest.mark.parametrize("connected", [False, True])
+async def test_force_connect_applies_query_settings_before_connect(connected):
+    conn = ProtoConnection()
+    conn.connected = connected
+    conn.ping = AsyncMock(return_value=False)
+
+    async def connect():
+        assert conn.context.client_settings["quota_key"] == "query-quota"
+        conn.connected = True
+
+    conn.connect = AsyncMock(side_effect=connect)
+
+    await conn.force_connect({"quota_key": "query-quota"})
+
+    conn.connect.assert_awaited_once()
+
+
+async def test_concurrent_execute_does_not_overwrite_reserved_query_settings():
+    conn = ProtoConnection()
+    connect_started = asyncio.Event()
+    finish_connect = asyncio.Event()
+
+    async def connect():
+        connect_started.set()
+        await finish_connect.wait()
+        conn.connected = True
+
+    conn.connect = connect
+
+    async def reserve_first_query():
+        context = ExecuteContext(conn, "SELECT 1", {"max_threads": 1})
+        await context.__aenter__()
+        return conn.context.settings
+
+    async def reject_second_query():
+        await connect_started.wait()
+        context = ExecuteContext(conn, "SELECT 2", {"max_threads": 2})
+        finish_connect.set()
+        with pytest.raises(PartiallyConsumedQueryError):
+            await context.__aenter__()
+
+    first_query_settings, _ = await asyncio.gather(reserve_first_query(), reject_second_query())
+
+    assert first_query_settings["max_threads"] == 1
 
 
 async def test_send_cancel_writes_cancel_packet():
@@ -49,8 +115,10 @@ async def test_receive_packet_honors_send_receive_timeout():
 
     conn._receive_packet_impl = never_returns
 
-    with pytest.raises(asyncio.TimeoutError):
+    with pytest.raises(SocketTimeoutError) as exc_info:
         await conn._receive_packet()
+
+    assert isinstance(exc_info.value.__cause__, asyncio.TimeoutError)
 
 
 async def test_ping_honors_sync_request_timeout():

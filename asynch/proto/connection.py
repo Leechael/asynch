@@ -17,6 +17,7 @@ from asynch.errors import (
     NetworkError,
     PartiallyConsumedQueryError,
     ServerException,
+    SocketTimeoutError,
     UnexpectedPacketFromServerError,
     UnknownPacketFromServerError,
 )
@@ -444,6 +445,10 @@ class Connection:
             sock.setsockopt(socket.IPPROTO_TCP, tcp_keepalive, interval_sec)
 
     async def ping(self) -> bool:
+        if self.is_query_executing:
+            logger.debug("Cannot ping %s while a query is executing", self)
+            return False
+
         async def receive_response():
             packet_type = await self.reader.read_varint()
             while packet_type == ServerPacket.PROGRESS:
@@ -594,9 +599,16 @@ class Connection:
             return True
 
     async def _receive_packet(self):
-        return await asyncio.wait_for(
-            self._receive_packet_impl(), timeout=self.send_receive_timeout
-        )
+        try:
+            return await asyncio.wait_for(
+                self._receive_packet_impl(), timeout=self.send_receive_timeout
+            )
+        except asyncio.TimeoutError as e:
+            await self.disconnect()
+            raise SocketTimeoutError(str(e)) from e
+        except (ConnectionError, OSError) as e:
+            await self.disconnect()
+            raise NetworkError(str(e)) from e
 
     async def _receive_packet_impl(self):
         packet = Packet()
@@ -867,7 +879,9 @@ class Connection:
                 await self.disconnect()
                 logger.warning("Failed to connect to %s:%s", host, port, exc_info=True)
         if err is not None:
-            raise err
+            if isinstance(err, asyncio.TimeoutError):
+                raise SocketTimeoutError(str(err)) from err
+            raise NetworkError(str(err)) from err
 
     async def execute(
         self,
@@ -1032,24 +1046,23 @@ class Connection:
         query_settings.update(settings)
         self.context.settings = query_settings
 
-    async def check_query_execution(self):
+    async def force_connect(self, settings=None):
         async with self._lock:
             if self.is_query_executing:
                 raise PartiallyConsumedQueryError()
 
+            self.make_query_settings(settings)
+
+            if not self.connected:
+                await self.connect()
+
+            elif not await self.ping():
+                if self.disable_reconnect:
+                    raise NetworkError("Connection was closed, reconnect is disabled.")
+                logger.info("Connection was closed, reconnecting.")
+                await self.connect()
+
             self.is_query_executing = True
-
-    async def force_connect(self):
-        await self.check_query_execution()
-
-        if not self.connected:
-            await self.connect()
-
-        elif not await self.ping():
-            if self.disable_reconnect:
-                raise NetworkError("Connection was closed, reconnect is disabled.")
-            logger.info("Connection was closed, reconnecting.")
-            await self.connect()
 
     async def process_ordinary_query(
         self,
