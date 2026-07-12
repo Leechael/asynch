@@ -4,6 +4,17 @@ on:
   schedule:
     - cron: "0 17 * * *"
   workflow_dispatch:
+    inputs:
+      wp01_benchmark:
+        description: Run only the manual WP01 D/A benchmark job
+        required: false
+        default: false
+        type: boolean
+      wp01_rows:
+        description: Rows in each deterministic A workload
+        required: false
+        default: "1000000"
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -11,6 +22,7 @@ concurrency:
 
 jobs:
   old-servers:
+    if: ${{ inputs.wp01_benchmark != true }}
     name: Python 3.13 / CH ${{ matrix.name }}
     runs-on: ubuntu-latest
     strategy:
@@ -55,6 +67,7 @@ jobs:
         run: PYTHONDEVMODE=1 PYTHONTRACEMALLOC=1 pytest
 
   python-versions:
+    if: ${{ inputs.wp01_benchmark != true }}
     name: Python ${{ matrix.python }} / CH latest
     runs-on: ubuntu-latest
     strategy:
@@ -91,6 +104,7 @@ jobs:
         run: PYTHONDEVMODE=1 PYTHONTRACEMALLOC=1 pytest
 
   zstd-suite:
+    if: ${{ inputs.wp01_benchmark != true }}
     name: Full suite over zstd
     runs-on: ubuntu-latest
     services:
@@ -124,6 +138,7 @@ jobs:
         run: PYTHONDEVMODE=1 PYTHONTRACEMALLOC=1 pytest
 
   without-cityhash:
+    if: ${{ inputs.wp01_benchmark != true }}
     name: Compression dependency absent
     runs-on: ubuntu-latest
     env:
@@ -143,6 +158,7 @@ jobs:
         run: pytest tests/test_proto/test_failure_compat.py::test_cityhash_dependency_contract
 
   tls:
+    if: ${{ inputs.wp01_benchmark != true }}
     name: TLS handshake and compression
     runs-on: ubuntu-latest
     steps:
@@ -160,3 +176,64 @@ jobs:
         run: bash tests/ci/start-clickhouse-tls.sh
       - name: Test a verified TLS handshake with compression
         run: pytest tests/test_compat_matrix.py::test_real_tls_handshake
+
+  wp01-benchmarks:
+    if: ${{ inputs.wp01_benchmark == true }}
+    name: Manual WP01 D/A measurement
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:latest
+        env:
+          CLICKHOUSE_SKIP_USER_SETUP: "1"
+        ports:
+          - 9000:9000
+        options: >-
+          --health-cmd "clickhouse-client --query 'SELECT 1'"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install benchmark dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ".[compression]" clickhouse-driver
+      - name: Run pool-contention matrix
+        env:
+          CLICKHOUSE_DSN: clickhouse://default:@127.0.0.1:9000/default
+        run: |
+          mkdir -p benchmarks/results/workflow
+          python -m benchmarks.bench_pool_contention --rtt-ms 0 --json \
+            > benchmarks/results/workflow/pool-rtt-0ms.json
+
+          for rtt in 1 5 20; do
+            delay_ms=$(python -c "print(${rtt} / 2)")
+            python -m benchmarks._proxy --listen 19000 --target 127.0.0.1:9000 \
+              --delay-ms "$delay_ms" &
+            proxy_pid=$!
+            trap 'kill "$proxy_pid" 2>/dev/null || true' EXIT
+            sleep 1
+            CLICKHOUSE_DSN='clickhouse://default:@127.0.0.1:19000/default' \
+              python -m benchmarks.bench_pool_contention --rtt-ms "$rtt" --json \
+              > "benchmarks/results/workflow/pool-rtt-${rtt}ms.json"
+            kill "$proxy_pid"
+            wait "$proxy_pid" || true
+            trap - EXIT
+          done
+      - name: Run event-loop-lag matrix
+        env:
+          CLICKHOUSE_DSN: clickhouse://default:@127.0.0.1:9000/default
+        run: |
+          python -m benchmarks.bench_loop_lag --rows "${{ inputs.wp01_rows }}" --json \
+            > benchmarks/results/workflow/loop-lag.json
+      - name: Upload raw measurement reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: wp01-benchmark-results-${{ github.run_id }}
+          path: benchmarks/results/workflow/
+          retention-days: 14

@@ -81,8 +81,9 @@ estimated comparison-driver result. `bench_concurrency.py` and
 conclusion; their wording must distinguish pool-level coroutine-vs-thread cost
 from nonexistent single-connection protocol multiplexing.
 
-When a local ClickHouse host is unavailable, run the `wp01-benchmarks` GitHub
-Actions workflow manually from the target branch. It is `workflow_dispatch`
-only—not a PR gate—and uploads the raw D/A JSON reports as an artifact. Download
-that artifact, inspect every raw distribution and conclusion, then commit the
-unchanged reports under `benchmarks/results/` with their measurement date.
+When a local ClickHouse host is unavailable, manually dispatch the existing
+`compat-nightly` workflow from the target branch with `wp01_benchmark=true`.
+That switch runs only the D/A measurement job—not a PR gate—and uploads raw
+JSON reports as an artifact. Download that artifact, inspect every raw
+distribution and conclusion, then commit the unchanged reports under
+`benchmarks/results/` with their measurement date.
