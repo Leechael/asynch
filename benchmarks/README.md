@@ -80,3 +80,9 @@ estimated comparison-driver result. `bench_concurrency.py` and
 `bench_throughput.py` are intentionally deferred until D and A have data and a
 conclusion; their wording must distinguish pool-level coroutine-vs-thread cost
 from nonexistent single-connection protocol multiplexing.
+
+When a local ClickHouse host is unavailable, run the `wp01-benchmarks` GitHub
+Actions workflow manually from the target branch. It is `workflow_dispatch`
+only—not a PR gate—and uploads the raw D/A JSON reports as an artifact. Download
+that artifact, inspect every raw distribution and conclusion, then commit the
+unchanged reports under `benchmarks/results/` with their measurement date.
