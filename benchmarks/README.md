@@ -88,8 +88,12 @@ concurrency or protocol multiplexing.
 
 ```bash
 python -m benchmarks.bench_throughput \
-  --source-driver-python /path/to/no-cython-source-build/bin/python
+  --source-driver-python /path/to/no-cython-source-build/bin/python \
+  --source-driver-revision 49afa09
 ```
+
+The source interpreter must retain `direct_url.json` metadata pointing to the
+local Git checkout at the expected revision.
 
 C compares asynch, the installed `clickhouse-driver` Cython extension build,
 and a separately supplied `clickhouse-driver` source build made without a

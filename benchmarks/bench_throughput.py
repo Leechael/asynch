@@ -16,6 +16,7 @@ from benchmarks.bench_loop_lag import (
     cleanup_tables,
     csv_strings,
     default_dsn,
+    execute,
     percentile,
     server_snapshot,
     update_compression,
@@ -70,6 +71,12 @@ finally:
 SOURCE_DRIVER_PROBE = r"""
 import importlib.machinery
 import json
+import subprocess
+import sys
+from importlib.metadata import distribution
+from pathlib import Path
+from urllib.parse import unquote, urlparse
+
 import clickhouse_driver.bufferedreader as bufferedreader
 import clickhouse_driver.bufferedwriter as bufferedwriter
 import clickhouse_driver.columns.largeint as largeint
@@ -80,7 +87,33 @@ suffixes = importlib.machinery.EXTENSION_SUFFIXES
 extensions = [module.__file__ for module in modules if module.__file__.endswith(tuple(suffixes))]
 if len(extensions) != 4:
     raise SystemExit("source comparison must expose all four clickhouse-driver extension modules")
-print(json.dumps({"source_c_extensions": extensions}))
+direct_url_text = distribution("clickhouse-driver").read_text("direct_url.json")
+if not direct_url_text:
+    raise SystemExit("source comparison must be installed from a local source checkout")
+direct_url = json.loads(direct_url_text)
+parsed_url = urlparse(direct_url["url"])
+if parsed_url.scheme != "file":
+    raise SystemExit("source comparison must be installed from a local source checkout")
+source_path = Path(unquote(parsed_url.path))
+completed = subprocess.run(
+    ["git", "-C", str(source_path), "rev-parse", "HEAD"],
+    check=False,
+    capture_output=True,
+    text=True,
+)
+if completed.returncode:
+    raise SystemExit("source comparison metadata does not point to a Git checkout")
+revision = completed.stdout.strip()
+expected_revision = sys.argv[1]
+if not revision.startswith(expected_revision):
+    raise SystemExit(
+        f"source comparison revision {revision} does not match expected {expected_revision}"
+    )
+print(json.dumps({
+    "source_c_extensions": extensions,
+    "source_direct_url": direct_url,
+    "source_revision": revision,
+}))
 """
 
 SOURCE_DRIVER_QUERY = r"""
@@ -114,18 +147,17 @@ def distribution(values: Iterable[float]) -> dict[str, object]:
     }
 
 
-async def execute(connection: Connection, query: str) -> None:
-    async with connection.cursor() as cursor:
-        await cursor.execute(query)
-
-
-async def prepare_tables(args: argparse.Namespace) -> dict[str, str]:
-    tables = {
+def table_names(args: argparse.Namespace) -> dict[str, str]:
+    return {
         "int64": f"{args.table_prefix}_throughput_int64",
         "string": f"{args.table_prefix}_throughput_string",
         "nullable": f"{args.table_prefix}_throughput_nullable",
         "lowcardinality": f"{args.table_prefix}_throughput_lowcardinality",
     }
+
+
+async def prepare_tables(args: argparse.Namespace) -> dict[str, str]:
+    tables = table_names(args)
     async with Connection(dsn=args.dsn) as connection:
         for table in tables.values():
             await execute(connection, f"DROP TABLE IF EXISTS {table}")
@@ -248,11 +280,11 @@ def check_pure_python(executable: Path) -> None:
         )
 
 
-def check_source_driver(executable: Path) -> None:
+def check_source_driver(executable: Path, expected_revision: str) -> dict[str, object]:
     if not executable.is_file():
         raise ValueError(f"--source-driver-python does not point to a file: {executable}")
     completed = subprocess.run(  # noqa: S603 -- probe the explicit interpreter
-        [str(executable), "-c", SOURCE_DRIVER_PROBE],
+        [str(executable), "-c", SOURCE_DRIVER_PROBE, expected_revision],
         check=False,
         capture_output=True,
         text=True,
@@ -260,6 +292,7 @@ def check_source_driver(executable: Path) -> None:
     if completed.returncode:
         message = completed.stderr.strip() or completed.stdout.strip()
         raise RuntimeError(f"source clickhouse-driver comparison is unavailable: {message}")
+    return json.loads(completed.stdout)
 
 
 def run_source_driver(executable: Path, dsn: str, query: str) -> tuple[int, float]:
@@ -276,10 +309,13 @@ def run_source_driver(executable: Path, dsn: str, query: str) -> tuple[int, floa
 async def run(args: argparse.Namespace) -> dict[str, object]:
     if args.pure_python_python:
         check_pure_python(args.pure_python_python)
+    source_provenance = None
     if args.source_driver_python:
-        check_source_driver(args.source_driver_python)
+        source_provenance = check_source_driver(
+            args.source_driver_python, args.source_driver_revision
+        )
     snapshot = await server_snapshot(args.dsn)
-    tables = await prepare_tables(args)
+    tables = table_names(args)
     results: list[dict[str, object]] = []
     drivers = ["asynch", "clickhouse_driver_cython"]
     if args.source_driver_python:
@@ -287,6 +323,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
     if args.pure_python_python:
         drivers.append("clickhouse_driver_pure_python")
     try:
+        await prepare_tables(args)
         for compression in args.compression:
             dsn = update_compression(args.dsn, compression)
             for shape, table in tables.items():
@@ -358,6 +395,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
             "source_driver_python": str(args.source_driver_python)
             if args.source_driver_python
             else None,
+            "source_driver_provenance": source_provenance,
         },
         "results": results,
     }
@@ -405,9 +443,14 @@ def parse_args() -> argparse.Namespace:
     comparison = parser.add_mutually_exclusive_group(required=True)
     comparison.add_argument("--pure-python-python", type=Path)
     comparison.add_argument("--source-driver-python", type=Path)
+    parser.add_argument("--source-driver-revision")
     parser.add_argument("--keep-tables", action="store_true")
     parser.add_argument("--json", action="store_true", dest="as_json")
     args = parser.parse_args()
+    if args.source_driver_python and not args.source_driver_revision:
+        parser.error("--source-driver-revision is required with --source-driver-python")
+    if args.source_driver_revision and not args.source_driver_python:
+        parser.error("--source-driver-revision requires --source-driver-python")
     if args.rows < 1:
         parser.error("--rows must be positive")
     if args.rounds < 5:

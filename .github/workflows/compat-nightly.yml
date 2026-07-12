@@ -250,6 +250,7 @@ jobs:
           python -m benchmarks.bench_throughput \
             --rows "${{ inputs.wp01_rows }}" \
             --source-driver-python /tmp/wp01-clickhouse-driver-source/bin/python \
+            --source-driver-revision 49afa09 \
             --json > benchmarks/results/workflow/throughput-source-c-extension.json
       - name: Upload raw measurement reports
         uses: actions/upload-artifact@v4
