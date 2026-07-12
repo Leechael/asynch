@@ -1,0 +1,176 @@
+WP01 first benchmark run
+========================
+
+Execution
+---------
+
+Source: GitHub Actions run 29179101506 (Manual WP01 D/A measurement)
+Runner: GitHub-hosted ubuntu-latest; results are a measurement of that host,
+not a universal throughput promise.
+ClickHouse: 26.6.1.1193, revision 54511
+Python: 3.13.14
+Seed: 20260712
+Rounds: one warmup plus five measured rounds for every configuration
+
+The five adjacent JSON files are the authoritative raw distributions. They
+retain every acquisition, worker-cycle, heartbeat-lag, duration, and ops/sec
+sample; no rounds were dropped and no conclusion below is based on a mean.
+
+Pool contention (D)
+-------------------
+
+Workers: 1, 8, 32, 128. Pool maxsize: 8, 32. Each worker performed five
+SELECT 1 loops per round. The latency proxy injected RTTs 0, 1, 5, and 20 ms.
+The fixed criterion is: at high contention, maxsize median throughput changes
+by at most 10% and the measured median is within [0.5x, 2x] of 1/(2*RTT).
+
+RTT 0 ms: not assessed (the theory is undefined without injected RTT).
+  Median aggregate ops/sec for workers 32: maxsize 8=891.391, 32=887.931.
+  Median aggregate ops/sec for workers 128: maxsize 8=866.883, 32=872.797.
+
+RTT 1 ms: not established under the fixed criterion.
+  Workers 32: maxsize 8=186.937 ops/sec (0.374x theory),
+  maxsize 32=187.553 ops/sec (0.375x theory), a 1.003x gain.
+  Workers 128: maxsize 8=190.389 ops/sec (0.381x theory),
+  maxsize 32=187.216 ops/sec (0.374x theory), a 0.983x gain.
+  Maxsize does not help, but the sub-millisecond-adjacent proxy/operation cost
+  keeps throughput below the criterion's lower factor bound.
+
+RTT 5 ms: established.
+  Workers 32: maxsize 8=74.381 ops/sec (0.744x theory),
+  maxsize 32=74.223 ops/sec (0.742x theory), a 0.998x gain.
+  Workers 128: maxsize 8=74.694 ops/sec (0.747x theory),
+  maxsize 32=74.509 ops/sec (0.745x theory), a 0.998x gain.
+
+RTT 20 ms: established.
+  Workers 32: maxsize 8=23.486 ops/sec (0.939x theory),
+  maxsize 32=23.582 ops/sec (0.943x theory), a 1.004x gain.
+  Workers 128: maxsize 8=23.483 ops/sec (0.939x theory),
+  maxsize 32=23.568 ops/sec (0.943x theory), a 1.004x gain.
+
+Conclusion: the lock-inside-RTT bottleneck is established for the 5 ms and
+20 ms injected-RTT measurements. The evidence is about Pool scheduling across
+connections only. It does not claim protocol-level multiplexing or concurrent
+queries on one connection.
+
+Event-loop lag (A)
+------------------
+
+The heartbeat interval was 10 ms. Idle baseline lag was p50=0.092 ms,
+p90=0.108 ms, p99=0.160 ms, max=0.185 ms (199 samples). The fixed blocking
+criterion is foreground p99 >= 10x idle p99 and >= 10 ms. Every configuration
+below met that criterion, including the clickhouse-driver executor control.
+That control result is reported as measured; it is not treated as a zero-lag
+baseline.
+
+Each line is scenario, compression, max_block_size: lag p50/p90/p99/max in ms;
+median rows/sec across the five measured rounds.
+
+asynch-stream-int64, off, 65409: 0.900/9.903/11.108/12.079; 759341.8 rows/sec
+asynch-stream-string, off, 65409: 15.284/24.079/25.565/36.891; 115811.6 rows/sec
+asynch-fetchall-int64, off, 65409: 1.457/2.131/96.304/101.142; 1802710.0 rows/sec
+asynch-fetchall-string, off, 65409: 14.908/16.764/19.870/89.423; 126617.6 rows/sec
+sync-executor-int64, off, 65409: 0.488/1.679/91.935/99.875; 2109140.7 rows/sec
+sync-executor-string, off, 65409: 0.377/1.278/64.723/68.021; 2376181.9 rows/sec
+
+asynch-stream-int64, off, 8192: 0.911/10.044/11.015/11.550; 761586.8 rows/sec
+asynch-stream-string, off, 8192: 15.006/23.964/27.266/43.166; 113990.7 rows/sec
+asynch-fetchall-int64, off, 8192: 1.125/2.381/93.558/97.287; 2076357.4 rows/sec
+asynch-fetchall-string, off, 8192: 15.040/16.580/19.605/86.011; 128532.7 rows/sec
+sync-executor-int64, off, 8192: 0.499/1.933/90.365/92.761; 2330828.4 rows/sec
+sync-executor-string, off, 8192: 0.489/1.237/65.030/84.593; 2601655.8 rows/sec
+
+asynch-stream-int64, lz4, 65409: 12.978/14.022/19.419/24.340; 698038.4 rows/sec
+asynch-stream-string, lz4, 65409: 202.694/209.006/271.366/273.134; 114194.4 rows/sec
+asynch-fetchall-int64, lz4, 65409: 4.209/7.602/96.952/105.255; 1826341.6 rows/sec
+asynch-fetchall-string, lz4, 65409: 172.289/178.656/235.380/253.323; 131203.8 rows/sec
+sync-executor-int64, lz4, 65409: 2.140/2.613/83.879/88.841; 2068862.6 rows/sec
+sync-executor-string, lz4, 65409: 1.001/2.982/59.724/63.903; 2643564.1 rows/sec
+
+asynch-stream-int64, lz4, 8192: 12.945/13.933/17.858/24.379; 702610.7 rows/sec
+asynch-stream-string, lz4, 8192: 197.886/203.505/268.049/271.206; 116544.9 rows/sec
+asynch-fetchall-int64, lz4, 8192: 3.774/6.588/99.206/104.562; 1859100.0 rows/sec
+asynch-fetchall-string, lz4, 8192: 174.942/183.088/242.293/253.695; 130643.9 rows/sec
+sync-executor-int64, lz4, 8192: 1.966/2.615/97.119/101.624; 2039785.5 rows/sec
+sync-executor-string, lz4, 8192: 0.976/2.439/61.384/64.587; 2732383.3 rows/sec
+
+Conclusion: event-loop blocking is established for all measured A scenarios on
+this host. Lowering max_block_size from 65409 to 8192 has no consistent,
+material p99 improvement: several cases improve slightly, while others are
+flat or worse. This supports the measured motivation to evaluate yielding at
+block boundaries after that change exists; it does not itself change driver
+behavior. Compressed String-heavy asynch reads are the most disruptive measured
+workload (stream p99 271.366 ms at 65409, 268.049 ms at 8192).
+
+Pool-level concurrency (B)
+--------------------------
+
+Source: GitHub Actions run 29182755561 (Manual WP01 D/A/B/C measurement)
+Runner: GitHub-hosted ubuntu-latest; results are a measurement of that host,
+not a universal throughput promise.
+ClickHouse: 26.6.1.1193, revision 54511
+Python: 3.13.14
+Seed: 20260712
+Workers: 1, 8, 32, 128. Iterations: five SELECT 1 queries per worker.
+Rounds: one warmup plus five measured rounds for every configuration.
+
+B has no pass/fail verdict. It records the pre-lock-refactor QPS-ratio baseline
+for asynch Pool relative to the official synchronous clickhouse-driver plus
+threads. Each line reports aggregate QPS p50/p90/p99, followed by all five
+measured QPS rounds. The comparison is pool-level coroutine-versus-thread
+overhead only, not protocol concurrency or multiplexing.
+
+RTT 0 ms:
+  Workers 1, asynch_pool: 422.944/448.526/448.526 QPS;
+    rounds=[415.974, 448.526, 444.622, 417.448, 422.944]
+  Workers 1, sync_thread_executor: 677.818/706.427/706.427 QPS;
+    rounds=[677.818, 703.004, 676.973, 706.427, 634.275]
+  Ratio asynch/sync=0.624x.
+  Workers 8, asynch_pool: 609.539/714.444/714.444 QPS;
+    rounds=[714.444, 633.489, 553.792, 566.225, 609.539]
+  Workers 8, sync_thread_executor: 978.929/1067.521/1067.521 QPS;
+    rounds=[978.929, 913.952, 888.136, 1058.726, 1067.521]
+  Ratio asynch/sync=0.623x.
+  Workers 32, asynch_pool: 740.733/753.474/753.474 QPS;
+    rounds=[740.733, 735.422, 740.273, 753.474, 752.241]
+  Workers 32, sync_thread_executor: 1057.526/1065.562/1065.562 QPS;
+    rounds=[1057.526, 1005.264, 1043.215, 1065.562, 1064.095]
+  Ratio asynch/sync=0.700x.
+  Workers 128, asynch_pool: 744.118/749.739/749.739 QPS;
+    rounds=[721.060, 744.118, 708.267, 749.739, 744.279]
+  Workers 128, sync_thread_executor: 927.450/939.657/939.657 QPS;
+    rounds=[892.670, 928.404, 899.344, 927.450, 939.657]
+  Ratio asynch/sync=0.802x.
+
+RTT 5 ms:
+  Workers 1, asynch_pool: 44.969/45.198/45.198 QPS;
+    rounds=[45.008, 44.401, 44.969, 45.198, 44.312]
+  Workers 1, sync_thread_executor: 49.397/51.272/51.272 QPS;
+    rounds=[51.272, 49.340, 48.933, 49.811, 49.397]
+  Ratio asynch/sync=0.910x.
+  Workers 8, asynch_pool: 253.817/260.744/260.744 QPS;
+    rounds=[253.817, 253.175, 260.744, 259.728, 249.065]
+  Workers 8, sync_thread_executor: 393.650/421.073/421.073 QPS;
+    rounds=[404.466, 388.712, 393.650, 388.231, 421.073]
+  Ratio asynch/sync=0.645x.
+  Workers 32, asynch_pool: 377.202/380.585/380.585 QPS;
+    rounds=[345.886, 377.202, 368.714, 380.585, 380.196]
+  Workers 32, sync_thread_executor: 899.856/960.945/960.945 QPS;
+    rounds=[899.856, 960.945, 839.783, 830.126, 903.269]
+  Ratio asynch/sync=0.419x.
+  Workers 128, asynch_pool: 366.969/377.744/377.744 QPS;
+    rounds=[374.338, 366.969, 365.386, 377.744, 359.236]
+  Workers 128, sync_thread_executor: 879.972/885.442/885.442 QPS;
+    rounds=[879.972, 885.077, 885.442, 826.621, 866.194]
+  Ratio asynch/sync=0.417x.
+
+The two B JSON files are authoritative and retain every round and every raw
+query-latency sample. The same parameters will be rerun after the lock
+refactor.
+
+Related C report
+----------------
+
+Single-query throughput (C) is recorded separately in
+2026-07-12-wp01-throughput-source-c-extension.txt. That report keeps the
+source C-extension control distinct from per-value async decoding.

@@ -1,0 +1,51 @@
+WP01 C source-C-extension throughput control
+=============================================
+
+Execution
+---------
+
+Source: GitHub Actions run 29180158417 (Manual WP01 D/A/C measurement)
+ClickHouse: 26.6.1.1193, revision 54511
+Python: 3.13.14
+Rows: 1,000,000 per query. Seed: 20260712.
+Rounds: one warmup plus five measured rounds for every configuration.
+
+The third clickhouse-driver control was built from the local reference checkout
+commit 49afa09 without Cython installed at build/runtime. It loads the upstream
+pre-generated C sources as four extension modules. Therefore its exact output
+label is `clickhouse_driver_source_c_extension`; it is not a pure-Python driver
+and must not be described as such.
+
+The adjacent JSON file is authoritative for all raw rows/sec and elapsed-time
+distributions. It contains all five measured rounds, p50/p90/p99/max, and was
+not filtered or averaged for this report.
+
+Median single-query throughput (rows/sec)
+------------------------------------------
+
+Each line is shape, compression: asynch; clickhouse-driver Cython wheel;
+clickhouse-driver source C-extension; source/wheel; asynch/wheel.
+
+Int64, off: 1685591.3; 1786697.3; 1724325.2; 0.965x; 0.943x
+String, off: 102066.5; 1856553.6; 1743084.7; 0.939x; 0.055x
+Nullable, off: 192720.0; 1450050.5; 1351430.3; 0.932x; 0.133x
+LowCardinality, off: 4017302.0; 4357523.6; 3797900.0; 0.872x; 0.922x
+
+Int64, lz4: 1373505.5; 1562835.7; 1414926.8; 0.905x; 0.879x
+String, lz4: 101980.4; 1877259.4; 1694154.1; 0.902x; 0.054x
+Nullable, lz4: 189730.9; 1346740.1; 1239539.8; 0.920x; 0.141x
+LowCardinality, lz4: 4155934.8; 4321505.9; 3710085.9; 0.859x; 0.962x
+
+Interpretation
+--------------
+
+The local reference source build is 3.5% to 14.1% below the installed Cython
+wheel on this runner. This is a source-build versus wheel measurement, not an
+isolation of Cython compiler effects: both paths execute C extensions, and
+compiler/toolchain differences remain possible.
+
+The asynch-to-wheel delta is modest for Int64 and LowCardinality on this host,
+but is substantial for String (5.4% to 5.5% of wheel throughput) and Nullable
+(13.3% to 14.1%). This is a single-query decoding comparison only. It does not
+measure Pool contention, and it does not demonstrate protocol-level concurrency
+or multiplexing.
