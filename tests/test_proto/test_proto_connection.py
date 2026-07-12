@@ -395,6 +395,22 @@ async def test_input_format_null_as_default(proto_conn, spec, data, expected):
 
 
 @pytest.mark.asyncio
+async def test_live_view_requires_explicit_enablement(proto_conn: ProtoConnection) -> None:
+    await proto_conn.execute("DROP TABLE IF EXISTS test.test")
+    await proto_conn.execute("CREATE TABLE test.test (x Int8) ENGINE=Memory;")
+    await proto_conn.execute("SET allow_experimental_live_view = 0")
+    await proto_conn.execute("DROP VIEW IF EXISTS lv")
+    try:
+        await proto_conn.execute("CREATE LIVE VIEW lv AS SELECT sum(x) FROM test.test")
+    except ServerException as exc:
+        if exc.code == ErrorCode.SYNTAX_ERROR and "LIVE VIEW" in exc.message:
+            pytest.skip("ClickHouse no longer supports LIVE VIEW")
+        assert exc.code == ErrorCode.SUPPORT_IS_DISABLED
+    else:
+        pytest.fail("LIVE VIEW should require explicit enablement")
+
+
+@pytest.mark.asyncio
 async def test_watch_zero_limit(proto_conn: ProtoConnection) -> None:
     await proto_conn.execute("DROP TABLE IF EXISTS test.test")
     await proto_conn.execute("CREATE TABLE test.test (x Int8) ENGINE=Memory;")
