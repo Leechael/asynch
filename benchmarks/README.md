@@ -139,6 +139,14 @@ pure_python / wheel` and `R_async = asynch / pure_python`, alongside the
 identity check `R_decython * R_async = asynch / wheel`. Ratios are only
 interpreted within the same run, never against an earlier run.
 
+### WP07 first result (2026-07-12)
+
+`results/2026-07-12-wp07-pure-python-throughput.{json,txt}` records the
+successful CI run. Its full-row gate passed for every shape/compression mode.
+String has `R_decython=0.206–0.208` and `R_async=0.214–0.217`; Nullable has
+`0.407–0.412` and `0.282–0.287`, respectively. Both costs are material; async
+loss is larger for both shapes. This is decision input, not a remediation choice.
+
 ## Results
 
 Commit first-run reports under `benchmarks/results/` with an ISO date prefix.
