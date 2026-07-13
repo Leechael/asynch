@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from asynch.connection import Connection
-from asynch.errors import AsynchPoolError
+from asynch.errors import AsynchPoolError, NetworkError
 from asynch.pool import Pool
 from asynch.proto import constants
 from asynch.proto.connection import METRICS_ENV
@@ -568,7 +568,7 @@ async def test_pool_broken_connection_handling(config):
 
             # he connection is invalidated
             await conn.close()
-            with pytest.raises(ConnectionError):
+            with pytest.raises(NetworkError):
                 await conn.ping()
 
             # but does not influence the pool state
