@@ -134,4 +134,5 @@ fixable = [
 [tool.ruff.lint.per-file-ignores]
 "asynch/proto/settings/types.py" = ["A005"]
 "benchmark/*.py" = ["ERA", "S", "T20"]
+"benchmarks/pure_python_driver/build_env.py" = ["T201"]
 "tests/**/*.py" = ["ERA", "S"]

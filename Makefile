@@ -4,7 +4,7 @@
 -include .env
 export
 
-DIRS = asynch/ tests/ benchmark/
+DIRS = asynch/ tests/ benchmark/ benchmarks/
 PY_DEBUG_OPTS = PYTHONDEVMODE=1 PYTHONTRACEMALLOC=1
 
 up:
