@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from asynch.connection import Connection
-from asynch.errors import PartiallyConsumedQueryError
+from asynch.errors import NetworkError, PartiallyConsumedQueryError
 from asynch.proto.models.enums import ConnectionStatus
 
 HOST = "192.168.15.103"
@@ -263,7 +263,7 @@ async def test_async_context_manager_interface(config):
     _test_connectivity_invariant(conn=conn, is_connected=False, is_closed=True)
     try:
         await conn.ping()
-    except ConnectionError:
+    except NetworkError:
         pass
 
     async with conn:
@@ -271,11 +271,12 @@ async def test_async_context_manager_interface(config):
         await conn.ping()
 
 
+@pytest.mark.no_clickhouse
 @pytest.mark.asyncio
 async def test_connection_ping(config):
     conn = Connection(dsn=config.dsn)
 
-    with pytest.raises(ConnectionError):
+    with pytest.raises(NetworkError):
         await conn.ping()
 
 
@@ -315,11 +316,11 @@ async def test_single_connection_rejects_simultaneous_execute(config):
     async with conn:
         await conn.ping()
 
-    with pytest.raises(ConnectionError):
+    with pytest.raises(NetworkError):
         await conn.ping()
 
     conn = Connection(dsn="clickhouse://inval:9000/non-existent")
-    with pytest.raises(ConnectionError):
+    with pytest.raises(NetworkError):
         await conn.ping()
 
 

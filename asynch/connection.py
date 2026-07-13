@@ -2,7 +2,7 @@ from types import MappingProxyType
 from typing import Optional
 
 from asynch.cursors import Cursor
-from asynch.errors import NotSupportedError
+from asynch.errors import NetworkError, NotSupportedError
 from asynch.proto import constants
 from asynch.proto.connection import Connection as ProtoConnection
 from asynch.proto.models.enums import ConnectionStatus
@@ -198,13 +198,13 @@ class Connection:
     async def ping(self) -> None:
         """Check the connection liveliness.
 
-        :raises ConnectionError: if ping() has failed
+        :raises NetworkError: if ping() has failed
         :return: None
         """
 
         if not await self._connection.ping():
             msg = f"Ping has failed for {self}"
-            raise ConnectionError(msg)
+            raise NetworkError(msg)
 
     async def _refresh(self) -> None:
         """Refresh the connection.
@@ -230,7 +230,7 @@ class Connection:
 
         try:
             await self.ping()
-        except ConnectionError:
+        except NetworkError:
             await self._connection.disconnect()
             await self.connect()
 
