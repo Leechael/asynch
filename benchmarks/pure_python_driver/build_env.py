@@ -32,7 +32,7 @@ def command(*args: str, cwd: Optional[Path] = None) -> subprocess.CompletedProce
 
 
 def probe(executable: Path, source: Path) -> dict[str, object]:
-    code = r'''
+    code = r"""
 import importlib.machinery
 import json
 import subprocess
@@ -74,7 +74,7 @@ if not revision.startswith(expected_revision):
 if any(expected_source not in path.parents for path in paths):
     raise SystemExit("pure-Python modules were not imported from the pinned checkout")
 print(json.dumps({"module_paths": [str(path) for path in paths], "source_revision": revision}))
-'''
+"""
     completed = command(str(executable), "-c", code, str(source), REVISION)
     return json.loads(completed.stdout)
 
