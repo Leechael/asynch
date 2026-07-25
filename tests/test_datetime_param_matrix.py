@@ -481,12 +481,19 @@ async def test_whole_second_value_needs_no_special_spelling(
 
 # --------------------------------------------------------------------------
 # Timezone-qualified columns: does the spelling change which instant is meant?
+#
+# Reading such a column back yields an aware datetime in the column's own zone,
+# so comparing the wall time answers "which instant did the server understand".
 # --------------------------------------------------------------------------
+
+
+def _wall_time(stored: datetime) -> datetime:
+    return stored.replace(tzinfo=None)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("column", "expected"), ZONED_CELLS)
-async def test_block_path_reads_a_naive_value_in_the_column_timezone(
+async def test_block_path_keeps_the_wall_time_of_a_naive_value(
     conn: Connection,
     zoned_table: str,
     column: str,
@@ -500,24 +507,19 @@ async def test_block_path_reads_a_naive_value_in_the_column_timezone(
             [{"seq": 1, column: VALUE}],
         )
 
-    assert await _stored(conn, zoned_table, column) == expected
+    assert _wall_time(await _stored(conn, zoned_table, column)) == expected
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("column", "expected"), ZONED_CELLS)
-async def test_bound_parameter_agrees_with_the_block_path_on_a_zoned_column(
+async def test_bound_parameter_insert_agrees_with_the_block_path(
     conn: Connection,
     driver: Connection,
     zoned_table: str,
     column: str,
     expected: datetime,
 ):
-    """A naive value must mean the same instant whichever path carries it.
-
-    Reading the column back yields the wall time in the column's own timezone,
-    so a spelling parsed in the server's timezone instead shows up here as a
-    shifted wall time rather than as an error.
-    """
+    """A naive value must mean the same instant whichever path carries it."""
 
     async with driver.cursor() as cursor:
         try:
@@ -530,34 +532,41 @@ async def test_bound_parameter_agrees_with_the_block_path_on_a_zoned_column(
 
     stored = await _stored(conn, zoned_table, column)
     _skip_if_dropped(stored)
-    assert stored == expected
+    assert _wall_time(stored) == expected
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("column", "expected"), ZONED_CELLS)
-async def test_bound_parameter_filter_agrees_on_a_zoned_column(
+async def test_typed_spelling_means_the_same_instant_as_the_column_timezone(
     conn: Connection,
     driver: Connection,
     zoned_table: str,
-    column: str,
-    expected: datetime,
 ):
-    """The same question on the read side, where a shift silently moves the window."""
+    """The question the typed spelling actually raises.
+
+    A bare string is parsed as a wall time in the column's zone, and the block
+    writer localises a naive value the same way. A typed literal carries no
+    zone, so if the server reads it in its own zone instead, the row seeded here
+    stops matching an equality filter for the very value it was seeded with.
+
+    The sub-second part matters: without one the driver emits a bare string and
+    the question never arises. The column sits far from any plausible server
+    default, so a match cannot be a coincidence.
+    """
 
     async with conn.cursor() as cursor:
         await cursor.executemany(
-            f"INSERT INTO {zoned_table} (seq, {column}) VALUES (%(seq)s, %({column})s)",
-            [{"seq": 1, column: SECOND}],
+            f"INSERT INTO {zoned_table} (seq, dt64_6) VALUES (%(seq)s, %(dt64_6)s)",
+            [{"seq": 1, "dt64_6": VALUE}],
         )
 
     async with driver.cursor() as cursor:
         try:
             await cursor.execute(
-                f"SELECT count() FROM {zoned_table} WHERE {column} = %(value)s",
-                {"value": SECOND},
+                f"SELECT count() FROM {zoned_table} WHERE dt64_6 = %(value)s",
+                {"value": VALUE},
             )
-            same = await cursor.fetchone()
+            matched = await cursor.fetchone()
         except ServerException as exc:
             pytest.skip(f"server rejected this spelling: Code {exc.code}")
 
-    assert same[0] == 1
+    assert matched[0] == 1
