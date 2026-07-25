@@ -47,17 +47,29 @@ For a value with no sub-second part, a plain string is already exact:
 SELECT ... WHERE ts >= '2026-07-25 17:33:45'
 ```
 
-For a value carrying microseconds, a plain string forces the server to
-reinterpret text, and what it decides depends on context and configuration. So
-outside of a `VALUES` section the driver spells the type out:
+For an **aware** value carrying microseconds, the driver first rebases the wall
+time onto the server's timezone and then spells the type out, so the literal
+denotes the same instant the caller passed:
 
 ```sql
 SELECT ... WHERE ts >= toDateTime64('2026-07-25 17:33:45.123456', 6)
 ALTER TABLE events UPDATE ts = toDateTime64('2026-07-25 17:33:45.123456', 6) WHERE id = 1
 ```
 
-The instant then survives intact: a filter compares at full precision instead of
+The instant survives intact: a filter compares at full precision instead of
 silently widening to the column's resolution.
+
+A **naive** value keeps the plain string. It denotes a wall time, not an
+instant, and the zone it belongs to is the target column's. The block writer
+localises it that way too (`columns/datetimecolumn.py`). A typed literal carries
+no zone and would be read in the server's, which moves the instant whenever the
+column carries a zone of its own — a `DateTime64(6, 'America/Los_Angeles')` row
+would stop matching the very value it was written with. Only the server can
+resolve a naive value against the column, so it is left to.
+
+The practical consequence: bind aware datetimes if you want sub-second filters
+to be exact. `datetime.now(timezone.utc)` and `pendulum.now("UTC")` already
+are.
 
 Inside a `VALUES` section the driver keeps the plain string, because ClickHouse
 parses that section with the input format rather than the expression evaluator,
@@ -66,6 +78,10 @@ and servers before 25.4 reject a typed literal there:
 ```sql
 INSERT INTO events (id, ts) VALUES (1, '2026-07-25 17:33:45.123456')
 ```
+
+So the typed spelling applies when all of these hold: the value is aware, it
+carries a sub-second part, the server timezone has been negotiated, and the
+statement has no `VALUES` section. Anything else keeps the plain string.
 
 Turn the behaviour off with `typed_datetime_literals=False` on the connection, or
 by setting `ASYNCH_TYPED_DATETIME_LITERALS=off`. It is on by default.
@@ -95,6 +111,8 @@ conn = Connection(dsn=dsn, settings={"date_time_input_format": "best_effort"})
 
 - Insert through a data insert when you can. It carries full precision, needs no
   setting, and behaves the same on every server version.
+- Bind aware datetimes. A naive value cannot be typed, so its sub-second part is
+  at the mercy of the server's parsing.
 - If you insert sub-second datetimes through the textual path against a
   `DateTime` column, set `date_time_input_format='best_effort'`.
 - On ClickHouse 25.4 and newer none of this is needed for inserts: the default

@@ -22,6 +22,7 @@ so they assert the exact result.
 
 import uuid
 from datetime import datetime
+from datetime import timezone as dt_timezone
 
 import pytest
 
@@ -30,6 +31,13 @@ from asynch.errors import ServerException
 
 VALUE = datetime(2026, 7, 25, 17, 33, 45, 123456)
 JUST_BEFORE = datetime(2026, 7, 25, 17, 33, 44, 999999)
+
+# Only an aware value is spelled as a typed literal: it denotes an instant, so
+# rebasing it onto the server's zone loses nothing. A naive value denotes a
+# wall time in the target column's zone, which only the server can resolve.
+AWARE_VALUE = VALUE.replace(tzinfo=dt_timezone.utc)
+AWARE_JUST_BEFORE = JUST_BEFORE.replace(tzinfo=dt_timezone.utc)
+AWARE_SECOND = datetime(2026, 7, 25, 17, 33, 45, tzinfo=dt_timezone.utc)
 
 SECOND = datetime(2026, 7, 25, 17, 33, 45)
 MILLISECOND = datetime(2026, 7, 25, 17, 33, 45, 123000)
@@ -564,6 +572,76 @@ async def test_typed_spelling_means_the_same_instant_as_the_column_timezone(
             await cursor.execute(
                 f"SELECT count() FROM {zoned_table} WHERE dt64_6 = %(value)s",
                 {"value": VALUE},
+            )
+            matched = await cursor.fetchone()
+        except ServerException as exc:
+            pytest.skip(f"server rejected this spelling: Code {exc.code}")
+
+    assert matched[0] == 1
+
+
+# --------------------------------------------------------------------------
+# Aware values, where the typed spelling applies.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("column", [name for name, _ in PRECISIONS])
+async def test_aware_parameter_filter_keeps_full_precision(
+    conn: Connection,
+    driver: Connection,
+    table: str,
+    column: str,
+):
+    """What the typed spelling buys: a filter at the value's own resolution."""
+
+    await _seed(conn, table, column, SECOND)
+
+    async with driver.cursor() as cursor:
+        try:
+            await cursor.execute(
+                f"SELECT count() FROM {table} WHERE {column} >= %(value)s",
+                {"value": AWARE_VALUE},
+            )
+            after = await cursor.fetchone()
+
+            await cursor.execute(
+                f"SELECT count() FROM {table} WHERE {column} >= %(value)s",
+                {"value": AWARE_JUST_BEFORE},
+            )
+            before = await cursor.fetchone()
+        except ServerException as exc:
+            pytest.skip(f"server rejected this spelling: Code {exc.code}")
+
+    assert after[0] == 0
+    assert before[0] == 1
+
+
+@pytest.mark.asyncio
+async def test_aware_parameter_means_the_same_instant_on_a_zoned_column(
+    conn: Connection,
+    driver: Connection,
+    zoned_table: str,
+):
+    """The typed spelling must not move an instant onto the server's zone.
+
+    The row is seeded through the block path, which resolves the value against
+    the column, and then asked for back by equality. A literal read in the
+    server's zone instead would stop matching the value it was seeded with, and
+    the column sits far enough away that a match cannot be a coincidence.
+    """
+
+    async with conn.cursor() as cursor:
+        await cursor.executemany(
+            f"INSERT INTO {zoned_table} (seq, dt64_6) VALUES (%(seq)s, %(dt64_6)s)",
+            [{"seq": 1, "dt64_6": AWARE_VALUE}],
+        )
+
+    async with driver.cursor() as cursor:
+        try:
+            await cursor.execute(
+                f"SELECT count() FROM {zoned_table} WHERE dt64_6 = %(value)s",
+                {"value": AWARE_VALUE},
             )
             matched = await cursor.fetchone()
         except ServerException as exc:

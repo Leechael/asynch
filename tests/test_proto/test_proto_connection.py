@@ -4,6 +4,7 @@ import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
+from datetime import timezone as dt_timezone
 from typing import cast
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -625,6 +626,31 @@ async def test_watch_zero_limit(proto_conn: ProtoConnection) -> None:
         assert data == (10, 1)
 
 
+def _conn_with_utc_server(**kwargs) -> ProtoConnection:
+    """A connection whose negotiated server timezone is known.
+
+    Only an aware value rebased onto that timezone is spelled as a typed
+    literal, so the spelling cannot be exercised without one.
+    """
+
+    conn = ProtoConnection(**kwargs)
+    conn.context.server_info = ServerInfo(
+        name="ClickHouse",
+        version_major=25,
+        version_minor=4,
+        version_patch=0,
+        revision=54483,
+        timezone="UTC",
+        display_name="test",
+        used_revision=54483,
+    )
+    return conn
+
+
+AWARE_VALUE = datetime(2026, 7, 25, 17, 33, 45, 123456, tzinfo=dt_timezone.utc)
+TYPED_VALUE = "toDateTime64('2026-07-25 17:33:45.123456', 6)"
+
+
 @pytest.mark.no_clickhouse
 @pytest.mark.parametrize(
     ("query", "expected"),
@@ -650,20 +676,20 @@ async def test_watch_zero_limit(proto_conn: ProtoConnection) -> None:
     ],
 )
 def test_datetime_spelling_follows_the_statement_context(query, expected):
-    conn = ProtoConnection()
+    conn = _conn_with_utc_server()
 
-    substituted = conn._substitute(query, {"value": datetime(2026, 7, 25, 17, 33, 45, 123456)})
+    substituted = conn._substitute(query, {"value": AWARE_VALUE})
 
     assert expected in substituted
 
 
 @pytest.mark.no_clickhouse
 def test_typed_datetime_literals_can_be_turned_off():
-    conn = ProtoConnection(typed_datetime_literals=False)
+    conn = _conn_with_utc_server(typed_datetime_literals=False)
 
     substituted = conn._substitute(
         "SELECT count() FROM t WHERE ts >= %(value)s",
-        {"value": datetime(2026, 7, 25, 17, 33, 45, 123456)},
+        {"value": AWARE_VALUE},
     )
 
     assert substituted.endswith("'2026-07-25 17:33:45.123456'")
@@ -700,11 +726,25 @@ def test_values_section_detection_ignores_comments_and_literals(query, expected)
 
 @pytest.mark.no_clickhouse
 def test_typed_spelling_survives_a_comment_that_mentions_values():
-    conn = ProtoConnection()
+    conn = _conn_with_utc_server()
 
     substituted = conn._substitute(
         "SELECT count() FROM t WHERE ts >= %(value)s -- INSERT INTO x VALUES",
+        {"value": AWARE_VALUE},
+    )
+
+    assert TYPED_VALUE in substituted
+
+
+@pytest.mark.no_clickhouse
+def test_naive_values_keep_the_bare_spelling_whatever_the_context():
+    """Their zone belongs to the target column, which only the server knows."""
+
+    conn = _conn_with_utc_server()
+
+    substituted = conn._substitute(
+        "SELECT count() FROM t WHERE ts >= %(value)s",
         {"value": datetime(2026, 7, 25, 17, 33, 45, 123456)},
     )
 
-    assert "toDateTime64('2026-07-25 17:33:45.123456', 6)" in substituted
+    assert substituted.endswith("'2026-07-25 17:33:45.123456'")

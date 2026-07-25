@@ -43,14 +43,23 @@ def escape_param(
         escaped = "NULL"
 
     elif isinstance(item, datetime):
-        if item.tzinfo is not None and context is not None:
+        # A typed literal carries no timezone, so the server reads it in its
+        # own. That only matches the value's meaning once the wall time has been
+        # rebased onto the server's zone, which needs both an aware value and a
+        # negotiated server timezone to do. A naive value means a wall time in
+        # the target column's zone, which only the server can resolve, so it
+        # stays a bare string for the server to parse against the column.
+        rebased_onto_server_tz = (
+            item.tzinfo is not None and context is not None and context.server_info is not None
+        )
+        if rebased_onto_server_tz:
             server_tz = timezone(context.server_info.get_timezone())
             item = item.astimezone(server_tz)
         fmt = "%Y-%m-%d %H:%M:%S"
         if item.microsecond:
             fmt += ".%f"
         escaped = "'%s'" % item.strftime(fmt)
-        if typed_datetime and item.microsecond:
+        if typed_datetime and item.microsecond and rebased_onto_server_tz:
             escaped = "toDateTime64(%s, 6)" % escaped
 
     elif isinstance(item, date):

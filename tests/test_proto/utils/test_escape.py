@@ -1,7 +1,10 @@
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
+from datetime import timezone as dt_timezone
 
 import pytest
 
+from asynch.proto.context import Context
+from asynch.proto.cs import ServerInfo
 from asynch.proto.utils.escape import escape_param
 
 pytestmark = pytest.mark.no_clickhouse
@@ -23,17 +26,58 @@ def test_escape_time_preserves_fraction_when_microseconds_are_present():
     assert escape_param(time(12, 34, 56, 789000)) == "'12:34:56.789000'"
 
 
-def test_typed_datetime_spells_out_the_type_when_a_fraction_is_present():
-    assert (
-        escape_param(datetime(2026, 1, 1, 0, 0, 0, 123456), typed_datetime=True)
-        == "toDateTime64('2026-01-01 00:00:00.123456', 6)"
+def _utc_context() -> Context:
+    context = Context()
+    context.server_info = ServerInfo(
+        name="ClickHouse",
+        version_major=25,
+        version_minor=4,
+        version_patch=0,
+        revision=54483,
+        timezone="UTC",
+        display_name="test",
+        used_revision=54483,
     )
+    return context
+
+
+AWARE = datetime(2026, 1, 1, 0, 0, 0, 123456, tzinfo=dt_timezone(timedelta(hours=9)))
+
+
+def test_typed_datetime_spells_out_the_type_for_an_aware_value():
+    """Rebased onto the server zone first, so the literal denotes the same instant."""
+
+    assert (
+        escape_param(AWARE, context=_utc_context(), typed_datetime=True)
+        == "toDateTime64('2025-12-31 15:00:00.123456', 6)"
+    )
+
+
+def test_naive_datetime_stays_a_bare_string():
+    """A naive value means a wall time in the target column's zone.
+
+    A typed literal is read in the server's zone instead, which would move the
+    instant whenever the column carries a zone of its own. Only the server can
+    resolve a naive value against the column, so it is left to.
+    """
+
+    assert escape_param(
+        datetime(2026, 1, 1, 0, 0, 0, 123456), context=_utc_context(), typed_datetime=True
+    ) == ("'2026-01-01 00:00:00.123456'")
+
+
+def test_aware_datetime_stays_a_bare_string_without_a_negotiated_timezone():
+    """Without server info the wall time was never rebased, so it cannot be typed."""
+
+    assert escape_param(AWARE, typed_datetime=True) == "'2026-01-01 00:00:00.123456'"
 
 
 def test_typed_datetime_leaves_whole_seconds_alone():
     """Without a fraction the bare string is already exact, so nothing changes."""
 
-    assert escape_param(datetime(2026, 1, 1, 0, 0, 0), typed_datetime=True) == (
+    whole = datetime(2026, 1, 1, 0, 0, 0, tzinfo=dt_timezone.utc)
+
+    assert escape_param(whole, context=_utc_context(), typed_datetime=True) == (
         "'2026-01-01 00:00:00'"
     )
 
@@ -41,12 +85,12 @@ def test_typed_datetime_leaves_whole_seconds_alone():
 def test_typed_datetime_is_ignored_for_server_side_parameters():
     """Server-side parameters travel in a typed slot, not as statement text."""
 
-    assert escape_param(
-        datetime(2026, 1, 1, 0, 0, 0, 123456), for_server=True, typed_datetime=True
-    ) == ("'2026-01-01 00:00:00.123456'")
+    assert escape_param(AWARE, context=_utc_context(), for_server=True, typed_datetime=True) == (
+        "'2025-12-31 15:00:00.123456'"
+    )
 
 
 def test_typed_datetime_reaches_values_nested_in_containers():
-    assert escape_param([datetime(2026, 1, 1, 0, 0, 0, 123456)], typed_datetime=True) == (
-        "[toDateTime64('2026-01-01 00:00:00.123456', 6)]"
+    assert escape_param([AWARE], context=_utc_context(), typed_datetime=True) == (
+        "[toDateTime64('2025-12-31 15:00:00.123456', 6)]"
     )
