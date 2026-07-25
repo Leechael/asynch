@@ -738,3 +738,26 @@ async def test_a_column_named_after_a_source_keyword_still_reads_as_a_data_secti
     finally:
         async with conn.cursor() as cursor:
             await cursor.execute(f"DROP TABLE IF EXISTS {table}")
+
+
+@pytest.mark.asyncio
+async def test_format_values_payload_takes_the_bare_spelling(
+    conn: Connection,
+    driver: Connection,
+    table: str,
+):
+    """FORMAT Values reaches the same parser as a VALUES section.
+
+    A whole second so the bare spelling is accepted everywhere, and a second
+    precision column so a typed literal would not be: servers before 25.4
+    refuse one there, which is what this asserts has not been emitted. No skip,
+    because that rejection is the failure being guarded against.
+    """
+
+    async with driver.cursor() as cursor:
+        await cursor.execute(
+            f"INSERT INTO {table} (seq, dt) FORMAT Values (1, %(value)s)",
+            {"value": AWARE_SECOND},
+        )
+
+    assert await _stored(conn, table, "dt") == SECOND

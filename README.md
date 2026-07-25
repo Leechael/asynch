@@ -183,7 +183,8 @@ Older ClickHouse servers do not support server-side parameters. In that case,
 use local `pyformat` substitution.
 
 An **aware** `datetime` is sent as the instant it denotes,
-`fromUnixTimestamp64Micro(...)`, outside of a `VALUES` section. A filter then
+`fromUnixTimestamp64Micro(...)`, unless the statement carries its rows as a
+payload, as `VALUES` and `FORMAT` do. A filter then
 compares at full precision instead of silently widening to the column's
 resolution, and neither a column carrying its own timezone nor a daylight
 saving fall-back hour can shift the value or make two instants look alike. A naive

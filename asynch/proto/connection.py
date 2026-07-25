@@ -99,9 +99,9 @@ _SQL_NOISE_RE = re.compile(
     re.VERBOSE | re.DOTALL,
 )
 # Whichever of these comes first decides where an INSERT takes its rows from.
-# VALUES first means a data section; anything else means a query feeds the
-# insert, and a VALUES later in the statement is the table function or part
-# of that query rather than a data section.
+# VALUES or FORMAT first means the rows arrive as a payload; anything else means
+# a query feeds the insert, and a VALUES later in the statement is a table
+# function or part of that query rather than a payload of its own.
 _INSERT_SOURCE_RE = re.compile(r"\b(VALUES|SELECT|WITH|FROM|FORMAT)\b", re.IGNORECASE)
 
 
@@ -128,13 +128,17 @@ def _blank_bracketed(text: str) -> str:
     return "".join(out)
 
 
-def has_values_section(query: str) -> bool:
-    """Whether the statement feeds rows through a VALUES section.
+def has_data_section(query: str) -> bool:
+    """Whether the statement carries its rows as a payload rather than a query.
 
-    That section parses its rows with the input format rather than the
+    A VALUES section parses its rows with the input format rather than the
     expression evaluator, and servers before 25.4 refuse a typed datetime
     literal there whatever ``date_time_input_format`` says, so substitution
     falls back to a bare string for those statements.
+
+    ``FORMAT`` counts the same way. ``FORMAT Values`` reaches the very same
+    parser under another spelling, and every other format takes data in its own
+    syntax, where a SQL function call has no meaning at all.
 
     Comments, quoted text, heredocs and bracketed groups are blanked out first.
     None of them says anything about where the rows come from, and reading a
@@ -150,7 +154,7 @@ def has_values_section(query: str) -> bool:
     if not bare.lstrip()[:6].upper().startswith("INSERT"):
         return False
     source = _INSERT_SOURCE_RE.search(_blank_bracketed(bare))
-    return source is not None and source.group(1).upper() == "VALUES"
+    return source is not None and source.group(1).upper() in {"VALUES", "FORMAT"}
 
 
 _INSERT_VALUES_PLACEHOLDER_RE = re.compile(
@@ -1295,7 +1299,7 @@ class Connection:
     def _substitute(self, query: str, params: Mapping[str, Any]) -> str:
         """Substitute parameters, choosing the datetime spelling for this statement."""
 
-        typed_datetime = self.typed_datetime_literals and not has_values_section(query)
+        typed_datetime = self.typed_datetime_literals and not has_data_section(query)
         return self.substitute_params(query, params, self.context, typed_datetime=typed_datetime)
 
     @staticmethod

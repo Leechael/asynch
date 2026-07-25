@@ -84,16 +84,22 @@ The practical consequence: bind aware datetimes if you want sub-second filters
 to be exact. `datetime.now(timezone.utc)` and `pendulum.now("UTC")` already
 are.
 
-Inside a `VALUES` section the driver keeps the plain string, because ClickHouse
-parses that section with the input format rather than the expression evaluator,
-and servers before 25.4 reject a typed literal there:
+Where the rows arrive as a payload the driver keeps the plain string, because
+ClickHouse parses a payload with the input format rather than the expression
+evaluator, and servers before 25.4 reject a typed literal there:
 
 ```sql
 INSERT INTO events (id, ts) VALUES (1, '2026-07-25 17:33:45.123456')
+INSERT INTO events (id, ts) FORMAT Values (1, '2026-07-25 17:33:45.123456')
 ```
 
+`FORMAT Values` reaches the same parser under another spelling, and every other
+format takes its data in a syntax of its own, where a SQL function call would
+mean nothing at all.
+
 So the typed spelling applies when both of these hold: the value is aware, and
-the statement has no `VALUES` section. Anything else keeps the plain string.
+the statement feeds its rows from a query rather than a payload. Anything else
+keeps the plain string.
 
 Turn the behaviour off with `typed_datetime_literals=False` on the connection, or
 by setting `ASYNCH_TYPED_DATETIME_LITERALS=off`. It is on by default.

@@ -18,7 +18,7 @@ from asynch.proto.connection import (
     SUBSTITUTE_PARAMS_STYLE_ENV,
     TYPED_DATETIME_ENV,
     Packet,
-    has_values_section,
+    has_data_section,
 )
 from asynch.proto.connection import (
     Connection as ProtoConnection,
@@ -667,10 +667,14 @@ TYPED_VALUE = "fromUnixTimestamp64Micro(1785000825123456)"
             "INSERT INTO t SELECT * FROM u WHERE ts >= %(value)s",
             "fromUnixTimestamp64Micro(1785000825123456)",
         ),
-        # A VALUES section parses through the input format, where servers before
+        # A data section parses through the input format, where servers before
         # 25.4 refuse a typed literal, so substitution falls back to a bare string.
         (
             "INSERT INTO t (ts) VALUES (%(value)s)",
+            "'2026-07-25 17:33:45.123456'",
+        ),
+        (
+            "INSERT INTO t (ts) FORMAT Values (%(value)s)",
             "'2026-07-25 17:33:45.123456'",
         ),
     ],
@@ -715,13 +719,18 @@ def test_typed_datetime_literals_can_be_turned_off_by_environment(monkeypatch):
         ("INSERT INTO t (format, ts) VALUES (%(format)s, %(ts)s)", True),
         ("INSERT INTO t (from, ts) VALUES (%(from)s, %(ts)s)", True),
         ("INSERT INTO t (select, values, ts) VALUES (1, 2, %(ts)s)", True),
+        # FORMAT Values reaches the same parser under another spelling, and
+        # every other format takes its data in a syntax of its own.
+        ("INSERT INTO t FORMAT Values\n(%(value)s)", True),
+        ("INSERT INTO t (a, ts) FORMAT Values (1, %(ts)s)", True),
+        ("INSERT INTO t FORMAT JSONEachRow", True),
+        ("INSERT INTO t FORMAT CSV\n1,2", True),
         # values(...) is a table function feeding a query, not a data section.
         (
             "INSERT INTO dst SELECT * FROM values('ts DateTime64(6)', (1)) WHERE ts >= %(v)s",
             False,
         ),
         ("INSERT INTO dst WITH x AS (SELECT 1) SELECT * FROM x", False),
-        ("INSERT INTO t FORMAT JSONEachRow", False),
         ("INSERT INTO t SELECT * FROM u WHERE note = $tag$ VALUES $tag$", False),
         # The words carry no weight inside a comment or a string, and treating
         # them as a VALUES section would drop the fraction from this filter.
@@ -735,8 +744,8 @@ def test_typed_datetime_literals_can_be_turned_off_by_environment(monkeypatch):
         ("ALTER TABLE t UPDATE a = %(v)s WHERE seq = 1", False),
     ],
 )
-def test_values_section_detection_ignores_comments_and_literals(query, expected):
-    assert has_values_section(query) is expected
+def test_data_section_detection_ignores_comments_and_literals(query, expected):
+    assert has_data_section(query) is expected
 
 
 @pytest.mark.no_clickhouse
