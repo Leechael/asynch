@@ -17,6 +17,7 @@ from asynch.proto.connection import (
     SUBSTITUTE_PARAMS_STYLE_ENV,
     TYPED_DATETIME_ENV,
     Packet,
+    has_values_section,
 )
 from asynch.proto.connection import (
     Connection as ProtoConnection,
@@ -674,3 +675,36 @@ def test_typed_datetime_literals_can_be_turned_off_by_environment(monkeypatch):
     conn = ProtoConnection()
 
     assert conn.typed_datetime_literals is False
+
+
+@pytest.mark.no_clickhouse
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("INSERT INTO t (a) VALUES (1)", True),
+        ("  insert into t values (1)", True),
+        ("INSERT INTO t (a) VALUES", True),
+        # The words carry no weight inside a comment or a string, and treating
+        # them as a VALUES section would drop the fraction from this filter.
+        ("SELECT 1 FROM t WHERE ts >= %(v)s -- INSERT INTO x VALUES", False),
+        ("/* INSERT INTO x VALUES (1) */ SELECT 1 FROM t WHERE ts >= %(v)s", False),
+        ("SELECT 1 FROM t WHERE note = 'INSERT INTO x VALUES'", False),
+        ("INSERT INTO t SELECT * FROM u WHERE note = 'VALUES'", False),
+        ("INSERT INTO t SELECT * FROM u WHERE ts >= %(v)s", False),
+        ("ALTER TABLE t UPDATE a = %(v)s WHERE seq = 1", False),
+    ],
+)
+def test_values_section_detection_ignores_comments_and_literals(query, expected):
+    assert has_values_section(query) is expected
+
+
+@pytest.mark.no_clickhouse
+def test_typed_spelling_survives_a_comment_that_mentions_values():
+    conn = ProtoConnection()
+
+    substituted = conn._substitute(
+        "SELECT count() FROM t WHERE ts >= %(value)s -- INSERT INTO x VALUES",
+        {"value": datetime(2026, 7, 25, 17, 33, 45, 123456)},
+    )
+
+    assert "toDateTime64('2026-07-25 17:33:45.123456', 6)" in substituted

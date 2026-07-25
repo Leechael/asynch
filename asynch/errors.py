@@ -448,34 +448,50 @@ class ServerException(DatabaseError):
         return f"Code: {self.code}.{nested}\n{self.message}{hint}"
 
 
-class ServerCannotParseTextError(ServerException):
+class _DatetimeHintedServerException(ServerException):
+    """A server error that carries guidance only when it is about a datetime.
+
+    Both codes below are generic: the same code covers a malformed number or a
+    mismatched string. Guessing at a datetime cause for every one of them would
+    send callers down the wrong path, so the hint is offered only when the
+    server's own message names a temporal type.
+    """
+
+    datetime_hint: Union[None, str] = None
+
+    @property
+    def hint(self) -> Union[None, str]:
+        if self.message and "DateTime" in self.message:
+            return self.datetime_hint
+        return None
+
+
+class ServerCannotParseTextError(_DatetimeHintedServerException):
     """The server could not parse a text literal into the target column type.
 
-    The common cause is a datetime carrying a sub-second part bound against a
-    second precision ``DateTime`` column. Whether the server accepts it is
+    When the value is a datetime, the cause is a sub-second part bound against a
+    second precision ``DateTime`` column. Whether the server accepts that is
     governed by ``date_time_input_format``, which this driver never overrides.
     See ``docs/datetime-parameters.md``.
     """
 
-    hint = (
-        "A text literal did not match the target column type. If the value is a "
-        "datetime with a sub-second part bound against a DateTime column, set "
-        "date_time_input_format='best_effort' or drop the fraction before binding. "
-        "See docs/datetime-parameters.md"
+    datetime_hint = (
+        "A datetime with a sub-second part did not parse against the target column. "
+        "Set date_time_input_format='best_effort', drop the fraction before binding, "
+        "or insert through a data insert. See docs/datetime-parameters.md"
     )
 
 
-class ServerTypeMismatchError(ServerException):
+class ServerTypeMismatchError(_DatetimeHintedServerException):
     """The server refused a value whose type does not match the target column.
 
-    In a VALUES section, older servers reject a ``toDateTime64`` literal bound
-    against a ``DateTime`` column this way. See ``docs/datetime-parameters.md``.
+    When the value is a datetime, a typed literal reached a VALUES section on a
+    server that refuses one there. See ``docs/datetime-parameters.md``.
     """
 
-    hint = (
-        "The value's type did not match the target column. In a VALUES section, "
-        "servers before 25.4 reject a typed datetime literal for a DateTime column. "
-        "See docs/datetime-parameters.md"
+    datetime_hint = (
+        "A typed datetime literal reached a VALUES section, which servers before "
+        "25.4 refuse for a DateTime column. See docs/datetime-parameters.md"
     )
 
 

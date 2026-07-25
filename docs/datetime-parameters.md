@@ -131,10 +131,27 @@ catching them, and both carry their remedy on the `hint` attribute.
 
 ## One case the driver cannot rescue
 
-On ClickHouse 24.3 and 25.3, with `date_time_input_format='basic'`, a sub-second
-datetime bound into a **`Nullable(DateTime)`** column through the textual path is
-stored as `NULL` instead of raising. Nothing in the response marks it, so no
-caller can detect it.
+A sub-second datetime bound into a **`Nullable(DateTime)`** column through the
+textual path can be stored as `NULL` instead of raising. Nothing in the response
+marks it, so no caller can detect it, and no spelling avoids it: inside a
+`VALUES` section the driver has to use a bare string.
+
+This is what the CI matrix measured, not a general rule about ClickHouse:
+
+| Server | `date_time_input_format` | Result |
+| --- | --- | --- |
+| 24.3-lts, 25.3-lts | `basic` | stored as `NULL` |
+| 24.3-lts, 25.3-lts | `best_effort` | stored, truncated to the second |
+| latest | either | stored, truncated to the second |
+
+The same shape appears for `ALTER TABLE ... UPDATE` on those servers, where
+`best_effort` does not help because a mutation evaluates its `SET` as an
+expression rather than through the input format.
+
+Other server builds, other settings and other nullable temporal types were not
+measured. The cases above live in `tests/test_datetime_param_matrix.py`; a cell
+that hits this outcome skips with `documented hazard: value dropped to NULL`, so
+the CI log for any given server shows which combinations it applies to.
 
 Avoid it by setting `best_effort`, by inserting through a data insert, or by
 upgrading the server.

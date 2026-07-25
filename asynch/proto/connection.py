@@ -86,11 +86,37 @@ def resolve_typed_datetime_literals(typed_datetime_literals: Optional[bool]) -> 
     return os.environ.get(TYPED_DATETIME_ENV, "").lower() not in _TYPED_DATETIME_FALSE_VALUES
 
 
-# A VALUES section parses its rows with the input format rather than the
-# expression evaluator, and servers before 25.4 refuse a typed datetime literal
-# there whatever date_time_input_format says. Substitution falls back to a bare
-# string for those statements so they keep working.
-_VALUES_SECTION_RE = re.compile(r"\bINSERT\b.*\bVALUES\b", re.IGNORECASE | re.DOTALL)
+_SQL_NOISE_RE = re.compile(
+    r"""
+      --[^\n]*          # line comment
+    | /\*.*?\*/         # block comment
+    | '(?:\\.|[^'\\])*' # single quoted literal
+    | "(?:\\.|[^"\\])*" # double quoted identifier
+    | `(?:[^`])*`       # backtick quoted identifier
+    """,
+    re.VERBOSE | re.DOTALL,
+)
+_VALUES_KEYWORD_RE = re.compile(r"\bVALUES\b", re.IGNORECASE)
+
+
+def has_values_section(query: str) -> bool:
+    """Whether the statement feeds rows through a VALUES section.
+
+    That section parses its rows with the input format rather than the
+    expression evaluator, and servers before 25.4 refuse a typed datetime
+    literal there whatever ``date_time_input_format`` says, so substitution
+    falls back to a bare string for those statements.
+
+    Comments and quoted text are blanked out first: the words INSERT and VALUES
+    sitting inside a comment or a string say nothing about the statement, and
+    treating them as a VALUES section would silently drop the sub-second part of
+    a filter in an otherwise ordinary query.
+    """
+
+    bare = _SQL_NOISE_RE.sub(" ", query)
+    if not bare.lstrip()[:6].upper().startswith("INSERT"):
+        return False
+    return _VALUES_KEYWORD_RE.search(bare) is not None
 
 
 _INSERT_VALUES_PLACEHOLDER_RE = re.compile(
@@ -1235,7 +1261,7 @@ class Connection:
     def _substitute(self, query: str, params: Mapping[str, Any]) -> str:
         """Substitute parameters, choosing the datetime spelling for this statement."""
 
-        typed_datetime = self.typed_datetime_literals and not _VALUES_SECTION_RE.search(query)
+        typed_datetime = self.typed_datetime_literals and not has_values_section(query)
         return self.substitute_params(query, params, self.context, typed_datetime=typed_datetime)
 
     @staticmethod

@@ -42,8 +42,24 @@ def test_unmapped_server_codes_stay_plain():
 
 @pytest.mark.no_clickhouse
 def test_hint_follows_the_server_message_without_replacing_it():
-    rendered = str(ServerCannotParseTextError("Cannot parse string", ErrorCode.CANNOT_PARSE_TEXT))
+    rendered = str(
+        ServerCannotParseTextError(
+            "Cannot parse string '2026-07-25 17:33:45.123456' as DateTime",
+            ErrorCode.CANNOT_PARSE_TEXT,
+        )
+    )
 
     assert "Cannot parse string" in rendered
     assert "date_time_input_format='best_effort'" in rendered
     assert "docs/datetime-parameters.md" in rendered
+
+
+@pytest.mark.no_clickhouse
+@pytest.mark.parametrize("exc_cls", [ServerCannotParseTextError, ServerTypeMismatchError])
+def test_no_datetime_guidance_when_the_error_is_about_something_else(exc_cls):
+    """These codes also cover malformed numbers and strings, which the hint would misdiagnose."""
+
+    exc = exc_cls("Cannot parse string 'abc' as UInt64", ErrorCode.CANNOT_PARSE_TEXT)
+
+    assert exc.hint is None
+    assert "date_time_input_format" not in str(exc)

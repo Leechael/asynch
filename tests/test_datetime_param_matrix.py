@@ -58,6 +58,20 @@ PRECISIONS = [
 # nullable second precision, where a rejected value can turn into a silent NULL.
 CELLS = [("dt", SECOND), ("dt64_6", MICROSECOND), ("dt_null", SECOND)]
 
+# A column may carry its own timezone. A bare string is parsed as a wall time
+# in that timezone, and the block writer localises a naive value the same way
+# (columns/datetimecolumn.py:74). A typed literal without a timezone argument
+# is parsed in the server's timezone instead, so the three could disagree on
+# which instant a naive value means. Two zones far from any plausible server
+# default, so a disagreement cannot hide behind a coincidence.
+ZONED_TABLE_COLUMNS = """
+    seq       UInt32,
+    dt        DateTime('Asia/Tokyo'),
+    dt64_6    DateTime64(6, 'America/Los_Angeles')
+"""
+
+ZONED_CELLS = [("dt", SECOND), ("dt64_6", MICROSECOND)]
+
 
 def _render(value: datetime) -> str:
     fmt = "%Y-%m-%d %H:%M:%S.%f" if value.microsecond else "%Y-%m-%d %H:%M:%S"
@@ -92,6 +106,16 @@ async def table(conn: Connection) -> str:
     name = f"test.dt_param_{uuid.uuid4().hex[:8]}"
     async with conn.cursor() as cursor:
         await cursor.execute(f"CREATE TABLE {name} ({TABLE_COLUMNS}) ENGINE = Memory")
+    yield name
+    async with conn.cursor() as cursor:
+        await cursor.execute(f"DROP TABLE IF EXISTS {name}")
+
+
+@pytest.fixture(scope="function")
+async def zoned_table(conn: Connection) -> str:
+    name = f"test.dt_zoned_{uuid.uuid4().hex[:8]}"
+    async with conn.cursor() as cursor:
+        await cursor.execute(f"CREATE TABLE {name} ({ZONED_TABLE_COLUMNS}) ENGINE = Memory")
     yield name
     async with conn.cursor() as cursor:
         await cursor.execute(f"DROP TABLE IF EXISTS {name}")
@@ -453,3 +477,87 @@ async def test_whole_second_value_needs_no_special_spelling(
         pytest.skip(f"server rejected this spelling: Code {exc.code}")
 
     assert await _stored(conn, table, column) == SECOND
+
+
+# --------------------------------------------------------------------------
+# Timezone-qualified columns: does the spelling change which instant is meant?
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("column", "expected"), ZONED_CELLS)
+async def test_block_path_reads_a_naive_value_in_the_column_timezone(
+    conn: Connection,
+    zoned_table: str,
+    column: str,
+    expected: datetime,
+):
+    """The reference: the block writer localises a naive value to the column."""
+
+    async with conn.cursor() as cursor:
+        await cursor.executemany(
+            f"INSERT INTO {zoned_table} (seq, {column}) VALUES (%(seq)s, %({column})s)",
+            [{"seq": 1, column: VALUE}],
+        )
+
+    assert await _stored(conn, zoned_table, column) == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("column", "expected"), ZONED_CELLS)
+async def test_bound_parameter_agrees_with_the_block_path_on_a_zoned_column(
+    conn: Connection,
+    driver: Connection,
+    zoned_table: str,
+    column: str,
+    expected: datetime,
+):
+    """A naive value must mean the same instant whichever path carries it.
+
+    Reading the column back yields the wall time in the column's own timezone,
+    so a spelling parsed in the server's timezone instead shows up here as a
+    shifted wall time rather than as an error.
+    """
+
+    async with driver.cursor() as cursor:
+        try:
+            await cursor.execute(
+                f"INSERT INTO {zoned_table} (seq, {column}) VALUES (%(seq)s, %(value)s)",
+                {"seq": 1, "value": VALUE},
+            )
+        except ServerException as exc:
+            pytest.skip(f"server rejected this spelling: Code {exc.code}")
+
+    stored = await _stored(conn, zoned_table, column)
+    _skip_if_dropped(stored)
+    assert stored == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("column", "expected"), ZONED_CELLS)
+async def test_bound_parameter_filter_agrees_on_a_zoned_column(
+    conn: Connection,
+    driver: Connection,
+    zoned_table: str,
+    column: str,
+    expected: datetime,
+):
+    """The same question on the read side, where a shift silently moves the window."""
+
+    async with conn.cursor() as cursor:
+        await cursor.executemany(
+            f"INSERT INTO {zoned_table} (seq, {column}) VALUES (%(seq)s, %({column})s)",
+            [{"seq": 1, column: SECOND}],
+        )
+
+    async with driver.cursor() as cursor:
+        try:
+            await cursor.execute(
+                f"SELECT count() FROM {zoned_table} WHERE {column} = %(value)s",
+                {"value": SECOND},
+            )
+            same = await cursor.fetchone()
+        except ServerException as exc:
+            pytest.skip(f"server rejected this spelling: Code {exc.code}")
+
+    assert same[0] == 1
