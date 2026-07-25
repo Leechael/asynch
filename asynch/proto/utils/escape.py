@@ -52,10 +52,13 @@ def escape_param(
 ) -> str:
     """Render a Python value as ClickHouse SQL text.
 
-    ``typed_datetime`` spells a sub-second datetime as a ``toDateTime64``
-    literal instead of a bare string, so the server receives an instant
-    rather than text it has to reinterpret. It is ignored for whole second
-    values, which need nothing preserved, and for server-side parameters,
+    ``typed_datetime`` sends an aware datetime as the instant it denotes,
+    microseconds since the epoch, rather than as text the server has to
+    reinterpret. This holds whatever the value's precision: a whole second
+    needs no fraction preserved but still has an instant to preserve, which a
+    wall time carrying no zone of its own would lose against a column that has
+    one. A naive value is left as a bare string, since only the server can
+    resolve it against the target column, and so are server-side parameters,
     which travel in a typed slot rather than in the statement text.
     """
 

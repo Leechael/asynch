@@ -185,8 +185,8 @@ use local `pyformat` substitution.
 An **aware** `datetime` is sent as the instant it denotes,
 `fromUnixTimestamp64Micro(...)`, outside of a `VALUES` section. A filter then
 compares at full precision instead of silently widening to the column's
-resolution, a column carrying its own timezone cannot shift the value, and a
-daylight saving fall-back hour cannot make two instants look alike. A naive
+resolution, and neither a column carrying its own timezone nor a daylight
+saving fall-back hour can shift the value or make two instants look alike. A naive
 value keeps the plain string: its zone belongs to the target column, and only
 the server can resolve that.
 

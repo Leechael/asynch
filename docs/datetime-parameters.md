@@ -55,7 +55,8 @@ SELECT ... WHERE ts >= fromUnixTimestamp64Micro(1785000825123456)
 ALTER TABLE events UPDATE ts = fromUnixTimestamp64Micro(1785000825123456) WHERE id = 1
 ```
 
-The instant survives intact on both counts a wall time would lose it on.
+A wall time would lose the instant in two ways, and this spelling loses it in
+neither.
 
 A filter compares at full precision instead of silently widening to the
 column's resolution. And the value keeps meaning the moment it meant: a wall
