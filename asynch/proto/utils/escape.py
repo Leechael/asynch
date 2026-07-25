@@ -67,13 +67,16 @@ def escape_param(
     elif isinstance(item, datetime):
         # An aware value denotes an instant, so it is sent as one: microseconds
         # since the epoch, which no zone or daylight saving transition can blur.
-        # Going through a wall time would not survive a fall-back hour, where
-        # two instants share the same local reading.
+        # A wall time would not manage that. It cannot survive a fall-back hour,
+        # where two instants share the same local reading, and it carries no
+        # zone of its own, so a column with one reads it as a local time and
+        # lands on a different instant. Neither depends on a sub-second part
+        # being present, so every aware value takes this route.
         #
         # A naive value denotes a wall time whose zone belongs to the target
         # column, which only the server can resolve, so it stays a bare string
         # for the server to parse against that column.
-        if typed_datetime and item.microsecond and is_aware(item):
+        if typed_datetime and is_aware(item):
             escaped = "fromUnixTimestamp64Micro(%d)" % epoch_microseconds(item)
         else:
             server_info = getattr(context, "server_info", None)

@@ -105,6 +105,29 @@ _SQL_NOISE_RE = re.compile(
 _INSERT_SOURCE_RE = re.compile(r"\b(VALUES|SELECT|WITH|FROM|FORMAT)\b", re.IGNORECASE)
 
 
+def _blank_bracketed(text: str) -> str:
+    """Blank out everything inside brackets, keeping the text's length.
+
+    ClickHouse accepts several of the source keywords as ordinary identifiers,
+    so a column list like ``(format, ts)`` would otherwise answer a question it
+    has no business answering. Nothing that decides where an INSERT takes its
+    rows from lives inside brackets.
+    """
+
+    out = []
+    depth = 0
+    for char in text:
+        if char == "(":
+            depth += 1
+            out.append(" ")
+        elif char == ")":
+            depth = max(0, depth - 1)
+            out.append(" ")
+        else:
+            out.append(" " if depth else char)
+    return "".join(out)
+
+
 def has_values_section(query: str) -> bool:
     """Whether the statement feeds rows through a VALUES section.
 
@@ -113,10 +136,10 @@ def has_values_section(query: str) -> bool:
     literal there whatever ``date_time_input_format`` says, so substitution
     falls back to a bare string for those statements.
 
-    Comments, quoted text and heredocs are blanked out first: the words INSERT
-    and VALUES sitting inside them say nothing about the statement, and treating
-    them as a VALUES section would silently drop the sub-second part of a filter
-    in an otherwise ordinary query.
+    Comments, quoted text, heredocs and bracketed groups are blanked out first.
+    None of them says anything about where the rows come from, and reading a
+    word out of one either drops the sub-second part of an ordinary filter or
+    puts a typed literal into a real VALUES section.
 
     What remains is decided by which source keyword comes first, not by whether
     VALUES appears at all, so ``INSERT INTO dst SELECT * FROM values(...)`` is
@@ -126,7 +149,7 @@ def has_values_section(query: str) -> bool:
     bare = _SQL_NOISE_RE.sub(" ", query)
     if not bare.lstrip()[:6].upper().startswith("INSERT"):
         return False
-    source = _INSERT_SOURCE_RE.search(bare)
+    source = _INSERT_SOURCE_RE.search(_blank_bracketed(bare))
     return source is not None and source.group(1).upper() == "VALUES"
 
 

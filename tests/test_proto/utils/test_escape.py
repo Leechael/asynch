@@ -84,10 +84,24 @@ def test_aware_datetime_needs_no_negotiated_timezone():
     assert escape_param(AWARE, typed_datetime=True) == "fromUnixTimestamp64Micro(1767193200123456)"
 
 
-def test_typed_datetime_leaves_whole_seconds_alone():
-    """Without a fraction the bare string is already exact, so nothing changes."""
+def test_aware_whole_seconds_are_sent_as_an_instant_too():
+    """A wall time carries no zone, so a zoned column would read it as its own.
+
+    Nothing about that depends on a sub-second part being present, so an aware
+    value takes the instant route whether or not it has one.
+    """
 
     whole = datetime(2026, 1, 1, 0, 0, 0, tzinfo=dt_timezone.utc)
+
+    assert escape_param(whole, context=_utc_context(), typed_datetime=True) == (
+        "fromUnixTimestamp64Micro(1767225600000000)"
+    )
+
+
+def test_naive_whole_seconds_stay_a_bare_string():
+    """Still the server's to resolve against the column."""
+
+    whole = datetime(2026, 1, 1, 0, 0, 0)
 
     assert escape_param(whole, context=_utc_context(), typed_datetime=True) == (
         "'2026-01-01 00:00:00'"
@@ -134,4 +148,6 @@ def test_escaping_survives_a_context_without_server_info():
 
     whole = datetime(2026, 1, 1, 0, 0, 0, tzinfo=dt_timezone.utc)
 
-    assert escape_param(whole, context=Context(), typed_datetime=True) == ("'2026-01-01 00:00:00'")
+    # With the spelling turned off an aware value takes the wall-time branch,
+    # which is the one that reaches for a negotiated timezone.
+    assert escape_param(whole, context=Context()) == "'2026-01-01 00:00:00'"

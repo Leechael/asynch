@@ -47,25 +47,29 @@ along with a plain dict.
 
 ## What the driver spells
 
-For a value with no sub-second part, a plain string is already exact:
-
-```sql
-SELECT ... WHERE ts >= '2026-07-25 17:33:45'
-```
-
-For an **aware** value carrying microseconds, the driver sends the instant
-itself, as microseconds since the epoch:
+For an **aware** value the driver sends the instant itself, as microseconds
+since the epoch:
 
 ```sql
 SELECT ... WHERE ts >= fromUnixTimestamp64Micro(1785000825123456)
 ALTER TABLE events UPDATE ts = fromUnixTimestamp64Micro(1785000825123456) WHERE id = 1
 ```
 
-The instant survives intact: a filter compares at full precision instead of
-silently widening to the column's resolution, and no zone or daylight saving
-transition can blur it. A wall time would not manage that last part — during a
-fall-back hour two different instants read the same on the clock, so
-`2025-11-02 05:30Z` and `06:30Z` are both `01:30` in New York.
+The instant survives intact on both counts a wall time would lose it on.
+
+A filter compares at full precision instead of silently widening to the
+column's resolution. And the value keeps meaning the moment it meant: a wall
+time carries no zone, so a column with one of its own reads it locally and
+lands somewhere else, and during a fall-back hour two different instants read
+the same on the clock — `2025-11-02 05:30Z` and `06:30Z` are both `01:30` in
+New York.
+
+Neither depends on a sub-second part being present, so an aware whole second
+takes the same route:
+
+```sql
+SELECT ... WHERE ts >= fromUnixTimestamp64Micro(1785000825000000)
+```
 
 A **naive** value keeps the plain string. It denotes a wall time, not an
 instant, and the zone it belongs to is the target column's. The block writer
@@ -87,9 +91,8 @@ and servers before 25.4 reject a typed literal there:
 INSERT INTO events (id, ts) VALUES (1, '2026-07-25 17:33:45.123456')
 ```
 
-So the typed spelling applies when all of these hold: the value is aware, it
-carries a sub-second part, and the statement has no `VALUES` section. Anything
-else keeps the plain string.
+So the typed spelling applies when both of these hold: the value is aware, and
+the statement has no `VALUES` section. Anything else keeps the plain string.
 
 Turn the behaviour off with `typed_datetime_literals=False` on the connection, or
 by setting `ASYNCH_TYPED_DATETIME_LITERALS=off`. It is on by default.

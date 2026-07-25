@@ -46,6 +46,8 @@ SECOND = datetime(2026, 7, 25, 17, 33, 45)
 MILLISECOND = datetime(2026, 7, 25, 17, 33, 45, 123000)
 MICROSECOND = datetime(2026, 7, 25, 17, 33, 45, 123456)
 
+AWARE_SECOND = SECOND.replace(tzinfo=dt_timezone.utc)
+
 TABLE_COLUMNS = """
     seq          UInt32,
     dt           DateTime,
@@ -676,3 +678,63 @@ async def test_repeated_wall_clock_hour_keeps_two_instants_apart(
         matched = await cursor.fetchall()
 
     assert [row[0] for row in matched] == [1]
+
+
+@pytest.mark.asyncio
+async def test_aware_whole_second_means_the_same_instant_on_a_zoned_column(
+    conn: Connection,
+    driver: Connection,
+    zoned_table: str,
+):
+    """A whole second has no fraction to preserve but still has an instant to.
+
+    Sent as a wall time it would carry no zone, and the column would read it as
+    a local one, so the row seeded here would stop matching the value it was
+    seeded with even though nothing about precision was at stake.
+    """
+
+    async with conn.cursor() as cursor:
+        await cursor.executemany(
+            f"INSERT INTO {zoned_table} (seq, dt) VALUES (%(seq)s, %(dt)s)",
+            [{"seq": 1, "dt": AWARE_SECOND}],
+        )
+
+    async with driver.cursor() as cursor:
+        await cursor.execute(
+            f"SELECT count() FROM {zoned_table} WHERE dt = %(value)s",
+            {"value": AWARE_SECOND},
+        )
+        matched = await cursor.fetchone()
+
+    assert matched[0] == 1
+
+
+@pytest.mark.asyncio
+async def test_a_column_named_after_a_source_keyword_still_reads_as_a_data_section(
+    conn: Connection,
+    driver: Connection,
+):
+    """ClickHouse takes `format` as an identifier; the driver must not read it as one.
+
+    Were the column list to decide where the rows come from, this statement
+    would look like a query and the driver would put a typed literal into a real
+    VALUES section, which older servers refuse.
+    """
+
+    table = f"test.dt_kw_{uuid.uuid4().hex[:8]}"
+    async with conn.cursor() as cursor:
+        await cursor.execute(
+            f"CREATE TABLE {table} (format String, dt64_6 DateTime64(6)) ENGINE = Memory"
+        )
+
+    try:
+        async with driver.cursor() as cursor:
+            await cursor.execute(
+                f"INSERT INTO {table} (format, dt64_6) VALUES (%(format)s, %(dt64_6)s)",
+                {"format": "json", "dt64_6": AWARE_VALUE},
+            )
+
+        assert await _stored(conn, table, "dt64_6") == MICROSECOND
+    finally:
+        async with conn.cursor() as cursor:
+            await cursor.execute(f"DROP TABLE IF EXISTS {table}")

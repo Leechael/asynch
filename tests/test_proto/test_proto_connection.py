@@ -710,6 +710,11 @@ def test_typed_datetime_literals_can_be_turned_off_by_environment(monkeypatch):
         ("INSERT INTO t (a) VALUES (1)", True),
         ("  insert into t values (1)", True),
         ("INSERT INTO t (a) VALUES", True),
+        # ClickHouse takes several of these keywords as ordinary identifiers,
+        # and a column list must not answer where the rows come from.
+        ("INSERT INTO t (format, ts) VALUES (%(format)s, %(ts)s)", True),
+        ("INSERT INTO t (from, ts) VALUES (%(from)s, %(ts)s)", True),
+        ("INSERT INTO t (select, values, ts) VALUES (1, 2, %(ts)s)", True),
         # values(...) is a table function feeding a query, not a data section.
         (
             "INSERT INTO dst SELECT * FROM values('ts DateTime64(6)', (1)) WHERE ts >= %(v)s",
