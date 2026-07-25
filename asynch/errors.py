@@ -476,9 +476,11 @@ class ServerCannotParseTextError(_DatetimeHintedServerException):
     """
 
     datetime_hint = (
-        "A datetime with a sub-second part did not parse against the target column. "
-        "Set date_time_input_format='best_effort', drop the fraction before binding, "
-        "or insert through a data insert. See docs/datetime-parameters.md"
+        "A temporal text literal did not parse against the target column. One cause "
+        "is a sub-second part meeting a DateTime column under "
+        "date_time_input_format='basic'; another is a value the server cannot read "
+        "at all. Check the value the server quoted above before changing settings. "
+        "See docs/datetime-parameters.md"
     )
 
 
@@ -490,8 +492,10 @@ class ServerTypeMismatchError(_DatetimeHintedServerException):
     """
 
     datetime_hint = (
-        "A typed datetime literal reached a VALUES section, which servers before "
-        "25.4 refuse for a DateTime column. See docs/datetime-parameters.md"
+        "A temporal value did not match the target column's type. One cause is a "
+        "typed datetime literal in a VALUES section, which servers before 25.4 "
+        "refuse for a DateTime column. Check the types the server named above. "
+        "See docs/datetime-parameters.md"
     )
 
 

@@ -44,12 +44,24 @@ def _utc_context() -> Context:
 AWARE = datetime(2026, 1, 1, 0, 0, 0, 123456, tzinfo=dt_timezone(timedelta(hours=9)))
 
 
-def test_typed_datetime_spells_out_the_type_for_an_aware_value():
-    """Rebased onto the server zone first, so the literal denotes the same instant."""
+def test_typed_datetime_sends_an_aware_value_as_an_instant():
+    """Microseconds since the epoch, so no zone or transition can blur it."""
 
     assert (
         escape_param(AWARE, context=_utc_context(), typed_datetime=True)
-        == "toDateTime64('2025-12-31 15:00:00.123456', 6)"
+        == "fromUnixTimestamp64Micro(1767193200123456)"
+    )
+
+
+def test_two_instants_sharing_a_wall_clock_reading_stay_distinct():
+    """A fall-back hour reads the same twice; the epoch form still separates them."""
+
+    first = datetime(2025, 11, 2, 5, 30, 0, 123456, tzinfo=dt_timezone.utc)
+    second = datetime(2025, 11, 2, 6, 30, 0, 123456, tzinfo=dt_timezone.utc)
+    context = _utc_context()
+
+    assert escape_param(first, context=context, typed_datetime=True) != escape_param(
+        second, context=context, typed_datetime=True
     )
 
 
@@ -66,10 +78,10 @@ def test_naive_datetime_stays_a_bare_string():
     ) == ("'2026-01-01 00:00:00.123456'")
 
 
-def test_aware_datetime_stays_a_bare_string_without_a_negotiated_timezone():
-    """Without server info the wall time was never rebased, so it cannot be typed."""
+def test_aware_datetime_needs_no_negotiated_timezone():
+    """An instant is absolute, so the spelling does not depend on server info."""
 
-    assert escape_param(AWARE, typed_datetime=True) == "'2026-01-01 00:00:00.123456'"
+    assert escape_param(AWARE, typed_datetime=True) == "fromUnixTimestamp64Micro(1767193200123456)"
 
 
 def test_typed_datetime_leaves_whole_seconds_alone():
@@ -92,5 +104,5 @@ def test_typed_datetime_is_ignored_for_server_side_parameters():
 
 def test_typed_datetime_reaches_values_nested_in_containers():
     assert escape_param([AWARE], context=_utc_context(), typed_datetime=True) == (
-        "[toDateTime64('2025-12-31 15:00:00.123456', 6)]"
+        "[fromUnixTimestamp64Micro(1767193200123456)]"
     )

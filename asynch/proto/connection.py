@@ -94,10 +94,15 @@ _SQL_NOISE_RE = re.compile(
     | '(?:\\.|[^'\\])*' # single quoted literal
     | "(?:\\.|[^"\\])*" # double quoted identifier
     | `(?:[^`])*`       # backtick quoted identifier
+    | \$[A-Za-z_]*\$.*?\$[A-Za-z_]*\$  # heredoc
     """,
     re.VERBOSE | re.DOTALL,
 )
-_VALUES_KEYWORD_RE = re.compile(r"\bVALUES\b", re.IGNORECASE)
+# Whichever of these comes first decides where an INSERT takes its rows from.
+# VALUES first means a data section; anything else means a query feeds the
+# insert, and a VALUES later in the statement is the table function or part
+# of that query rather than a data section.
+_INSERT_SOURCE_RE = re.compile(r"\b(VALUES|SELECT|WITH|FROM|FORMAT)\b", re.IGNORECASE)
 
 
 def has_values_section(query: str) -> bool:
@@ -108,16 +113,21 @@ def has_values_section(query: str) -> bool:
     literal there whatever ``date_time_input_format`` says, so substitution
     falls back to a bare string for those statements.
 
-    Comments and quoted text are blanked out first: the words INSERT and VALUES
-    sitting inside a comment or a string say nothing about the statement, and
-    treating them as a VALUES section would silently drop the sub-second part of
-    a filter in an otherwise ordinary query.
+    Comments, quoted text and heredocs are blanked out first: the words INSERT
+    and VALUES sitting inside them say nothing about the statement, and treating
+    them as a VALUES section would silently drop the sub-second part of a filter
+    in an otherwise ordinary query.
+
+    What remains is decided by which source keyword comes first, not by whether
+    VALUES appears at all, so ``INSERT INTO dst SELECT * FROM values(...)`` is
+    read as the query it is rather than as a data section.
     """
 
     bare = _SQL_NOISE_RE.sub(" ", query)
     if not bare.lstrip()[:6].upper().startswith("INSERT"):
         return False
-    return _VALUES_KEYWORD_RE.search(bare) is not None
+    source = _INSERT_SOURCE_RE.search(bare)
+    return source is not None and source.group(1).upper() == "VALUES"
 
 
 _INSERT_VALUES_PLACEHOLDER_RE = re.compile(

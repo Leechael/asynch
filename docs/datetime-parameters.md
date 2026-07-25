@@ -36,8 +36,14 @@ Here the statement is assembled as text before anything is sent, so the driver
 has no column type to work from. It can only choose how to spell the value; the
 server decides what that spelling means.
 
-Watch out for the boundary: a list of two rows is a data insert, a list of one
-row is not. Through SQLAlchemy, `text()` with a dict lands on the textual path.
+At this API the boundary is the *type* of `args`: any list, tuple or generator
+is a data insert, whatever its length, and a mapping is not.
+
+Through SQLAlchemy the boundary moves, because SQLAlchemy decides for itself
+when to call `executemany`. `Core insert()` and the ORM always reach the block
+path. A `text()` statement reaches it only with more than one row: SQLAlchemy
+unwraps a single-element list into one mapping, so it lands on the textual path
+along with a plain dict.
 
 ## What the driver spells
 
@@ -47,17 +53,19 @@ For a value with no sub-second part, a plain string is already exact:
 SELECT ... WHERE ts >= '2026-07-25 17:33:45'
 ```
 
-For an **aware** value carrying microseconds, the driver first rebases the wall
-time onto the server's timezone and then spells the type out, so the literal
-denotes the same instant the caller passed:
+For an **aware** value carrying microseconds, the driver sends the instant
+itself, as microseconds since the epoch:
 
 ```sql
-SELECT ... WHERE ts >= toDateTime64('2026-07-25 17:33:45.123456', 6)
-ALTER TABLE events UPDATE ts = toDateTime64('2026-07-25 17:33:45.123456', 6) WHERE id = 1
+SELECT ... WHERE ts >= fromUnixTimestamp64Micro(1785000825123456)
+ALTER TABLE events UPDATE ts = fromUnixTimestamp64Micro(1785000825123456) WHERE id = 1
 ```
 
 The instant survives intact: a filter compares at full precision instead of
-silently widening to the column's resolution.
+silently widening to the column's resolution, and no zone or daylight saving
+transition can blur it. A wall time would not manage that last part — during a
+fall-back hour two different instants read the same on the clock, so
+`2025-11-02 05:30Z` and `06:30Z` are both `01:30` in New York.
 
 A **naive** value keeps the plain string. It denotes a wall time, not an
 instant, and the zone it belongs to is the target column's. The block writer
@@ -80,8 +88,8 @@ INSERT INTO events (id, ts) VALUES (1, '2026-07-25 17:33:45.123456')
 ```
 
 So the typed spelling applies when all of these hold: the value is aware, it
-carries a sub-second part, the server timezone has been negotiated, and the
-statement has no `VALUES` section. Anything else keeps the plain string.
+carries a sub-second part, and the statement has no `VALUES` section. Anything
+else keeps the plain string.
 
 Turn the behaviour off with `typed_datetime_literals=False` on the connection, or
 by setting `ASYNCH_TYPED_DATETIME_LITERALS=off`. It is on by default.

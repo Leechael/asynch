@@ -38,6 +38,10 @@ JUST_BEFORE = datetime(2026, 7, 25, 17, 33, 44, 999999)
 AWARE_VALUE = VALUE.replace(tzinfo=dt_timezone.utc)
 AWARE_JUST_BEFORE = JUST_BEFORE.replace(tzinfo=dt_timezone.utc)
 
+# 2025-11-02 in New York: 05:30 and 06:30 UTC both read 01:30 on the clock.
+DST_FIRST = datetime(2025, 11, 2, 5, 30, 0, 123456, tzinfo=dt_timezone.utc)
+DST_SECOND = datetime(2025, 11, 2, 6, 30, 0, 123456, tzinfo=dt_timezone.utc)
+
 SECOND = datetime(2026, 7, 25, 17, 33, 45)
 MILLISECOND = datetime(2026, 7, 25, 17, 33, 45, 123000)
 MICROSECOND = datetime(2026, 7, 25, 17, 33, 45, 123456)
@@ -596,21 +600,20 @@ async def test_aware_parameter_filter_keeps_full_precision(
 
     await _seed(conn, table, column, SECOND)
 
+    # No skip here. This spelling has to work on every server in the matrix, so
+    # a rejection is a regression rather than a documented limitation.
     async with driver.cursor() as cursor:
-        try:
-            await cursor.execute(
-                f"SELECT count() FROM {table} WHERE {column} >= %(value)s",
-                {"value": AWARE_VALUE},
-            )
-            after = await cursor.fetchone()
+        await cursor.execute(
+            f"SELECT count() FROM {table} WHERE {column} >= %(value)s",
+            {"value": AWARE_VALUE},
+        )
+        after = await cursor.fetchone()
 
-            await cursor.execute(
-                f"SELECT count() FROM {table} WHERE {column} >= %(value)s",
-                {"value": AWARE_JUST_BEFORE},
-            )
-            before = await cursor.fetchone()
-        except ServerException as exc:
-            pytest.skip(f"server rejected this spelling: Code {exc.code}")
+        await cursor.execute(
+            f"SELECT count() FROM {table} WHERE {column} >= %(value)s",
+            {"value": AWARE_JUST_BEFORE},
+        )
+        before = await cursor.fetchone()
 
     assert after[0] == 0
     assert before[0] == 1
@@ -637,13 +640,39 @@ async def test_aware_parameter_means_the_same_instant_on_a_zoned_column(
         )
 
     async with driver.cursor() as cursor:
-        try:
-            await cursor.execute(
-                f"SELECT count() FROM {zoned_table} WHERE dt64_6 = %(value)s",
-                {"value": AWARE_VALUE},
-            )
-            matched = await cursor.fetchone()
-        except ServerException as exc:
-            pytest.skip(f"server rejected this spelling: Code {exc.code}")
+        await cursor.execute(
+            f"SELECT count() FROM {zoned_table} WHERE dt64_6 = %(value)s",
+            {"value": AWARE_VALUE},
+        )
+        matched = await cursor.fetchone()
 
     assert matched[0] == 1
+
+
+@pytest.mark.asyncio
+async def test_repeated_wall_clock_hour_keeps_two_instants_apart(
+    conn: Connection,
+    driver: Connection,
+    table: str,
+):
+    """A fall-back hour reads the same on the clock twice.
+
+    New York turns 01:59:59 EDT into 01:00:00 EST on 2025-11-02, so 05:30 and
+    06:30 UTC both read 01:30 locally. A spelling that goes through a wall time
+    cannot tell them apart, and a filter would then match the wrong row.
+    """
+
+    async with conn.cursor() as cursor:
+        await cursor.executemany(
+            f"INSERT INTO {table} (seq, dt64_6) VALUES (%(seq)s, %(dt64_6)s)",
+            [{"seq": 1, "dt64_6": DST_FIRST}, {"seq": 2, "dt64_6": DST_SECOND}],
+        )
+
+    async with driver.cursor() as cursor:
+        await cursor.execute(
+            f"SELECT seq FROM {table} WHERE dt64_6 = %(value)s",
+            {"value": DST_FIRST},
+        )
+        matched = await cursor.fetchall()
+
+    assert [row[0] for row in matched] == [1]

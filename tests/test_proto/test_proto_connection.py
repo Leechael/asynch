@@ -648,7 +648,7 @@ def _conn_with_utc_server(**kwargs) -> ProtoConnection:
 
 
 AWARE_VALUE = datetime(2026, 7, 25, 17, 33, 45, 123456, tzinfo=dt_timezone.utc)
-TYPED_VALUE = "toDateTime64('2026-07-25 17:33:45.123456', 6)"
+TYPED_VALUE = "fromUnixTimestamp64Micro(1785000825123456)"
 
 
 @pytest.mark.no_clickhouse
@@ -657,15 +657,15 @@ TYPED_VALUE = "toDateTime64('2026-07-25 17:33:45.123456', 6)"
     [
         (
             "SELECT count() FROM t WHERE ts >= %(value)s",
-            "toDateTime64('2026-07-25 17:33:45.123456', 6)",
+            "fromUnixTimestamp64Micro(1785000825123456)",
         ),
         (
             "ALTER TABLE t UPDATE ts = %(value)s WHERE seq = 1",
-            "toDateTime64('2026-07-25 17:33:45.123456', 6)",
+            "fromUnixTimestamp64Micro(1785000825123456)",
         ),
         (
             "INSERT INTO t SELECT * FROM u WHERE ts >= %(value)s",
-            "toDateTime64('2026-07-25 17:33:45.123456', 6)",
+            "fromUnixTimestamp64Micro(1785000825123456)",
         ),
         # A VALUES section parses through the input format, where servers before
         # 25.4 refuse a typed literal, so substitution falls back to a bare string.
@@ -710,6 +710,14 @@ def test_typed_datetime_literals_can_be_turned_off_by_environment(monkeypatch):
         ("INSERT INTO t (a) VALUES (1)", True),
         ("  insert into t values (1)", True),
         ("INSERT INTO t (a) VALUES", True),
+        # values(...) is a table function feeding a query, not a data section.
+        (
+            "INSERT INTO dst SELECT * FROM values('ts DateTime64(6)', (1)) WHERE ts >= %(v)s",
+            False,
+        ),
+        ("INSERT INTO dst WITH x AS (SELECT 1) SELECT * FROM x", False),
+        ("INSERT INTO t FORMAT JSONEachRow", False),
+        ("INSERT INTO t SELECT * FROM u WHERE note = $tag$ VALUES $tag$", False),
         # The words carry no weight inside a comment or a string, and treating
         # them as a VALUES section would drop the fraction from this filter.
         ("SELECT 1 FROM t WHERE ts >= %(v)s -- INSERT INTO x VALUES", False),

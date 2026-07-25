@@ -1,5 +1,6 @@
 import json
 from datetime import date, datetime, time
+from datetime import timezone as datetime_timezone
 from enum import Enum
 from typing import Any, Mapping
 from uuid import UUID
@@ -7,6 +8,16 @@ from uuid import UUID
 from pytz import timezone
 
 from .compat import string_types, text_type
+
+_EPOCH = datetime(1970, 1, 1, tzinfo=datetime_timezone.utc)
+
+
+def epoch_microseconds(item: datetime) -> int:
+    """Microseconds since the epoch, by integer arithmetic on an aware value."""
+
+    delta = item - _EPOCH
+    return (delta.days * 86400 + delta.seconds) * 1000000 + delta.microseconds
+
 
 escape_chars_map = {
     "\b": "\\b",
@@ -43,24 +54,24 @@ def escape_param(
         escaped = "NULL"
 
     elif isinstance(item, datetime):
-        # A typed literal carries no timezone, so the server reads it in its
-        # own. That only matches the value's meaning once the wall time has been
-        # rebased onto the server's zone, which needs both an aware value and a
-        # negotiated server timezone to do. A naive value means a wall time in
-        # the target column's zone, which only the server can resolve, so it
-        # stays a bare string for the server to parse against the column.
-        rebased_onto_server_tz = (
-            item.tzinfo is not None and context is not None and context.server_info is not None
-        )
-        if rebased_onto_server_tz:
-            server_tz = timezone(context.server_info.get_timezone())
-            item = item.astimezone(server_tz)
-        fmt = "%Y-%m-%d %H:%M:%S"
-        if item.microsecond:
-            fmt += ".%f"
-        escaped = "'%s'" % item.strftime(fmt)
-        if typed_datetime and item.microsecond and rebased_onto_server_tz:
-            escaped = "toDateTime64(%s, 6)" % escaped
+        # An aware value denotes an instant, so it is sent as one: microseconds
+        # since the epoch, which no zone or daylight saving transition can blur.
+        # Going through a wall time would not survive a fall-back hour, where
+        # two instants share the same local reading.
+        #
+        # A naive value denotes a wall time whose zone belongs to the target
+        # column, which only the server can resolve, so it stays a bare string
+        # for the server to parse against that column.
+        if typed_datetime and item.tzinfo is not None and item.microsecond:
+            escaped = "fromUnixTimestamp64Micro(%d)" % epoch_microseconds(item)
+        else:
+            if item.tzinfo is not None and context is not None:
+                server_tz = timezone(context.server_info.get_timezone())
+                item = item.astimezone(server_tz)
+            fmt = "%Y-%m-%d %H:%M:%S"
+            if item.microsecond:
+                fmt += ".%f"
+            escaped = "'%s'" % item.strftime(fmt)
 
     elif isinstance(item, date):
         escaped = "'%s'" % item.strftime("%Y-%m-%d")

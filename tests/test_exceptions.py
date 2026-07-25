@@ -50,7 +50,7 @@ def test_hint_follows_the_server_message_without_replacing_it():
     )
 
     assert "Cannot parse string" in rendered
-    assert "date_time_input_format='best_effort'" in rendered
+    assert "date_time_input_format='basic'" in rendered
     assert "docs/datetime-parameters.md" in rendered
 
 
