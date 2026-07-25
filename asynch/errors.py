@@ -469,10 +469,10 @@ class _DatetimeHintedServerException(ServerException):
 class ServerCannotParseTextError(_DatetimeHintedServerException):
     """The server could not parse a text literal into the target column type.
 
-    When the value is a datetime, the cause is a sub-second part bound against a
-    second precision ``DateTime`` column. Whether the server accepts that is
-    governed by ``date_time_input_format``, which this driver never overrides.
-    See ``docs/datetime-parameters.md``.
+    When the value is temporal, one cause is a sub-second part bound against a
+    second precision ``DateTime`` column, which ``date_time_input_format``
+    governs and this driver never overrides. Another is a value the server
+    cannot read at all, whatever the setting. See ``docs/datetime-parameters.md``.
     """
 
     datetime_hint = (
@@ -487,8 +487,9 @@ class ServerCannotParseTextError(_DatetimeHintedServerException):
 class ServerTypeMismatchError(_DatetimeHintedServerException):
     """The server refused a value whose type does not match the target column.
 
-    When the value is a datetime, a typed literal reached a VALUES section on a
-    server that refuses one there. See ``docs/datetime-parameters.md``.
+    When the value is temporal, one cause is a typed literal reaching a VALUES
+    section on a server that refuses one there; the column and the value may
+    also simply disagree. See ``docs/datetime-parameters.md``.
     """
 
     datetime_hint = (

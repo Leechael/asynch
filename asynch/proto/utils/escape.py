@@ -12,6 +12,17 @@ from .compat import string_types, text_type
 _EPOCH = datetime(1970, 1, 1, tzinfo=datetime_timezone.utc)
 
 
+def is_aware(item: datetime) -> bool:
+    """Whether the value carries a usable offset.
+
+    A tzinfo alone is not enough: one whose ``utcoffset`` returns None leaves
+    the value naive in every way that matters, and arithmetic against an aware
+    epoch would raise rather than yield an instant.
+    """
+
+    return item.tzinfo is not None and item.utcoffset() is not None
+
+
 def epoch_microseconds(item: datetime) -> int:
     """Microseconds since the epoch, by integer arithmetic on an aware value."""
 
@@ -62,11 +73,12 @@ def escape_param(
         # A naive value denotes a wall time whose zone belongs to the target
         # column, which only the server can resolve, so it stays a bare string
         # for the server to parse against that column.
-        if typed_datetime and item.tzinfo is not None and item.microsecond:
+        if typed_datetime and item.microsecond and is_aware(item):
             escaped = "fromUnixTimestamp64Micro(%d)" % epoch_microseconds(item)
         else:
-            if item.tzinfo is not None and context is not None:
-                server_tz = timezone(context.server_info.get_timezone())
+            server_info = getattr(context, "server_info", None)
+            if item.tzinfo is not None and server_info is not None:
+                server_tz = timezone(server_info.get_timezone())
                 item = item.astimezone(server_tz)
             fmt = "%Y-%m-%d %H:%M:%S"
             if item.microsecond:

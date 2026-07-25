@@ -1,4 +1,4 @@
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, tzinfo
 from datetime import timezone as dt_timezone
 
 import pytest
@@ -106,3 +106,32 @@ def test_typed_datetime_reaches_values_nested_in_containers():
     assert escape_param([AWARE], context=_utc_context(), typed_datetime=True) == (
         "[fromUnixTimestamp64Micro(1767193200123456)]"
     )
+
+
+class _NoOffset(tzinfo):
+    """A tzinfo that declines to say what the offset is."""
+
+    def utcoffset(self, dt):
+        return None
+
+    def tzname(self, dt):
+        return "X"
+
+    def dst(self, dt):
+        return None
+
+
+def test_tzinfo_without_an_offset_is_not_treated_as_aware():
+    """Python calls such a value naive, and epoch arithmetic on it would raise."""
+
+    value = datetime(2026, 1, 1, 0, 0, 0, 123456, tzinfo=_NoOffset())
+
+    assert escape_param(value, typed_datetime=True) == "'2026-01-01 00:00:00.123456'"
+
+
+def test_escaping_survives_a_context_without_server_info():
+    """The utility is usable before a connection has negotiated anything."""
+
+    whole = datetime(2026, 1, 1, 0, 0, 0, tzinfo=dt_timezone.utc)
+
+    assert escape_param(whole, context=Context(), typed_datetime=True) == ("'2026-01-01 00:00:00'")
