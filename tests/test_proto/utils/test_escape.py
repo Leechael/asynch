@@ -58,7 +58,7 @@ def test_naive_datetime_stays_a_bare_string():
 
     A typed literal is read in the server's zone instead, which would move the
     instant whenever the column carries a zone of its own. Only the server can
-    resolve a naive value against the column, so it is left to.
+    resolve a naive value against the column, so the driver leaves that to it.
     """
 
     assert escape_param(

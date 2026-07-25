@@ -89,6 +89,7 @@ def resolve_typed_datetime_literals(typed_datetime_literals: Optional[bool]) -> 
 _SQL_NOISE_RE = re.compile(
     r"""
       --[^\n]*          # line comment
+    | \#[^\n]*          # line comment, ClickHouse also accepts # and #!
     | /\*.*?\*/         # block comment
     | '(?:\\.|[^'\\])*' # single quoted literal
     | "(?:\\.|[^"\\])*" # double quoted identifier

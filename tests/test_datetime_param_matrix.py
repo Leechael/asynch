@@ -37,7 +37,6 @@ JUST_BEFORE = datetime(2026, 7, 25, 17, 33, 44, 999999)
 # wall time in the target column's zone, which only the server can resolve.
 AWARE_VALUE = VALUE.replace(tzinfo=dt_timezone.utc)
 AWARE_JUST_BEFORE = JUST_BEFORE.replace(tzinfo=dt_timezone.utc)
-AWARE_SECOND = datetime(2026, 7, 25, 17, 33, 45, tzinfo=dt_timezone.utc)
 
 SECOND = datetime(2026, 7, 25, 17, 33, 45)
 MILLISECOND = datetime(2026, 7, 25, 17, 33, 45, 123000)

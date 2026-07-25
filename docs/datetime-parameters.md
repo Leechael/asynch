@@ -65,7 +65,7 @@ localises it that way too (`columns/datetimecolumn.py`). A typed literal carries
 no zone and would be read in the server's, which moves the instant whenever the
 column carries a zone of its own — a `DateTime64(6, 'America/Los_Angeles')` row
 would stop matching the very value it was written with. Only the server can
-resolve a naive value against the column, so it is left to.
+resolve a naive value against the column, so the driver leaves that to it.
 
 The practical consequence: bind aware datetimes if you want sub-second filters
 to be exact. `datetime.now(timezone.utc)` and `pendulum.now("UTC")` already

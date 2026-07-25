@@ -713,6 +713,8 @@ def test_typed_datetime_literals_can_be_turned_off_by_environment(monkeypatch):
         # The words carry no weight inside a comment or a string, and treating
         # them as a VALUES section would drop the fraction from this filter.
         ("SELECT 1 FROM t WHERE ts >= %(v)s -- INSERT INTO x VALUES", False),
+        ("SELECT 1 FROM t WHERE ts >= %(v)s # INSERT INTO x VALUES", False),
+        ("#!INSERT INTO x VALUES\nSELECT 1 FROM t WHERE ts >= %(v)s", False),
         ("/* INSERT INTO x VALUES (1) */ SELECT 1 FROM t WHERE ts >= %(v)s", False),
         ("SELECT 1 FROM t WHERE note = 'INSERT INTO x VALUES'", False),
         ("INSERT INTO t SELECT * FROM u WHERE note = 'VALUES'", False),
