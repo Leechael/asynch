@@ -432,6 +432,10 @@ class DatabaseError(ClickHouseException):
 
 
 class ServerException(DatabaseError):
+    #: Guidance appended after the server's own message by the subclasses below.
+    #: The server reports what went wrong; the hint says what to do about it.
+    hint: Union[None, str] = None
+
     def __init__(self, message, code=None, nested=None):
         self.message = message
         self.code = code
@@ -440,7 +444,74 @@ class ServerException(DatabaseError):
 
     def __str__(self):
         nested = f"\nNested: {self.nested}" if self.nested else ""
-        return f"Code: {self.code}.{nested}\n{self.message}"
+        hint = f"\nHint: {self.hint}" if self.hint else ""
+        return f"Code: {self.code}.{nested}\n{self.message}{hint}"
+
+
+class _DatetimeHintedServerException(ServerException):
+    """A server error that carries guidance only when it is about a datetime.
+
+    Both codes below are generic: the same code covers a malformed number or a
+    mismatched string. Guessing at a datetime cause for every one of them would
+    send callers down the wrong path, so the hint is offered only when the
+    server's own message names a temporal type.
+    """
+
+    datetime_hint: Union[None, str] = None
+
+    @property
+    def hint(self) -> Union[None, str]:
+        if self.message and "DateTime" in self.message:
+            return self.datetime_hint
+        return None
+
+
+class ServerCannotParseTextError(_DatetimeHintedServerException):
+    """The server could not parse a text literal into the target column type.
+
+    When the value is temporal, one cause is a sub-second part bound against a
+    second precision ``DateTime`` column, which ``date_time_input_format``
+    governs and this driver never overrides. Another is a value the server
+    cannot read at all, whatever the setting. See ``docs/datetime-parameters.md``.
+    """
+
+    datetime_hint = (
+        "A temporal text literal did not parse against the target column. One cause "
+        "is a sub-second part meeting a DateTime column under "
+        "date_time_input_format='basic'; another is a value the server cannot read "
+        "at all. Check the value the server quoted above before changing settings. "
+        "See docs/datetime-parameters.md"
+    )
+
+
+class ServerTypeMismatchError(_DatetimeHintedServerException):
+    """The server refused a value whose type does not match the target column.
+
+    When the value is temporal, one cause is a typed literal reaching a VALUES
+    section on a server that refuses one there; the column and the value may
+    also simply disagree. See ``docs/datetime-parameters.md``.
+    """
+
+    datetime_hint = (
+        "A temporal value did not match the target column's type. One cause is a "
+        "typed datetime literal in a VALUES section, which servers before 25.4 "
+        "refuse for a DateTime column. Check the types the server named above. "
+        "See docs/datetime-parameters.md"
+    )
+
+
+#: Server error codes that carry actionable guidance of their own. Anything else
+#: stays a plain ServerException, so ``except ServerException`` keeps catching all.
+SERVER_EXCEPTION_BY_CODE = {
+    ErrorCode.CANNOT_PARSE_TEXT: ServerCannotParseTextError,
+    ErrorCode.TYPE_MISMATCH: ServerTypeMismatchError,
+}
+
+
+def server_exception_for(code) -> type:
+    """Return the ServerException subclass that matches a server error code."""
+
+    return SERVER_EXCEPTION_BY_CODE.get(code, ServerException)
 
 
 class UnexpectedPacketFromServerError(ClickHouseException):

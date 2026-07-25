@@ -16,10 +16,10 @@ from uuid import UUID
 from asynch.errors import (
     NetworkError,
     PartiallyConsumedQueryError,
-    ServerException,
     SocketTimeoutError,
     UnexpectedPacketFromServerError,
     UnknownPacketFromServerError,
+    server_exception_for,
 )
 from asynch.proto import constants
 from asynch.proto.block import (
@@ -68,11 +68,93 @@ _SUBSTITUTE_PARAMS_STYLE_ALIASES = {
 }
 _METRICS_TRUE_VALUES = {"1", "true", "on"}
 
+TYPED_DATETIME_ENV = "ASYNCH_TYPED_DATETIME_LITERALS"
+_TYPED_DATETIME_FALSE_VALUES = {"0", "false", "off"}
+
 
 def resolve_metrics_enabled(metrics: Optional[bool]) -> bool:
     if metrics is not None:
         return metrics
     return os.environ.get(METRICS_ENV, "").lower() in _METRICS_TRUE_VALUES
+
+
+def resolve_typed_datetime_literals(typed_datetime_literals: Optional[bool]) -> bool:
+    """Resolve the typed datetime literal switch, which is on unless turned off."""
+
+    if typed_datetime_literals is not None:
+        return typed_datetime_literals
+    return os.environ.get(TYPED_DATETIME_ENV, "").lower() not in _TYPED_DATETIME_FALSE_VALUES
+
+
+_SQL_NOISE_RE = re.compile(
+    r"""
+      --[^\n]*          # line comment
+    | \#[^\n]*          # line comment, ClickHouse also accepts # and #!
+    | /\*.*?\*/         # block comment
+    | '(?:\\.|[^'\\])*' # single quoted literal
+    | "(?:\\.|[^"\\])*" # double quoted identifier
+    | `(?:[^`])*`       # backtick quoted identifier
+    | \$[A-Za-z_]*\$.*?\$[A-Za-z_]*\$  # heredoc
+    """,
+    re.VERBOSE | re.DOTALL,
+)
+# Whichever of these comes first decides where an INSERT takes its rows from.
+# VALUES or FORMAT first means the rows arrive as a payload; anything else means
+# a query feeds the insert, and a VALUES later in the statement is a table
+# function or part of that query rather than a payload of its own.
+_INSERT_SOURCE_RE = re.compile(r"\b(VALUES|SELECT|WITH|FROM|FORMAT)\b", re.IGNORECASE)
+
+
+def _blank_bracketed(text: str) -> str:
+    """Blank out everything inside brackets, keeping the text's length.
+
+    ClickHouse accepts several of the source keywords as ordinary identifiers,
+    so a column list like ``(format, ts)`` would otherwise answer a question it
+    has no business answering. Nothing that decides where an INSERT takes its
+    rows from lives inside brackets.
+    """
+
+    out = []
+    depth = 0
+    for char in text:
+        if char == "(":
+            depth += 1
+            out.append(" ")
+        elif char == ")":
+            depth = max(0, depth - 1)
+            out.append(" ")
+        else:
+            out.append(" " if depth else char)
+    return "".join(out)
+
+
+def has_data_section(query: str) -> bool:
+    """Whether the statement carries its rows as a payload rather than a query.
+
+    A VALUES section parses its rows with the input format rather than the
+    expression evaluator, and servers before 25.4 refuse a typed datetime
+    literal there whatever ``date_time_input_format`` says, so substitution
+    falls back to a bare string for those statements.
+
+    ``FORMAT`` counts the same way. ``FORMAT Values`` reaches the very same
+    parser under another spelling, and every other format takes data in its own
+    syntax, where a SQL function call has no meaning at all.
+
+    Comments, quoted text, heredocs and bracketed groups are blanked out first.
+    None of them says anything about where the rows come from, and reading a
+    word out of one either drops the sub-second part of an ordinary filter or
+    puts a typed literal into a real VALUES section.
+
+    What remains is decided by which source keyword comes first, not by whether
+    VALUES appears at all, so ``INSERT INTO dst SELECT * FROM values(...)`` is
+    read as the query it is rather than as a data section.
+    """
+
+    bare = _SQL_NOISE_RE.sub(" ", query)
+    if not bare.lstrip()[:6].upper().startswith("INSERT"):
+        return False
+    source = _INSERT_SOURCE_RE.search(_blank_bracketed(bare))
+    return source is not None and source.group(1).upper() in {"VALUES", "FORMAT"}
 
 
 _INSERT_VALUES_PLACEHOLDER_RE = re.compile(
@@ -158,9 +240,11 @@ class Connection:
         settings_is_important=False,
         metrics: Optional[bool] = None,
         buffer_size: Optional[int] = None,
+        typed_datetime_literals: Optional[bool] = None,
         **kwargs,
     ):
         self.stack_track = stack_track
+        self.typed_datetime_literals = resolve_typed_datetime_literals(typed_datetime_literals)
         self.metrics_enabled = self._resolve_metrics_enabled(metrics)
         self.buffer_size = self._resolve_buffer_size(buffer_size)
         self._metrics_query_sent_at = None
@@ -586,7 +670,7 @@ class Connection:
         if has_nested:
             nested = await self.read_exception()
 
-        return ServerException(new_message, code, nested=nested)
+        return server_exception_for(code)(new_message, code, nested=nested)
 
     async def receive_profile_info(self):
         profile_info = BlockStreamProfileInfo(self.reader)
@@ -1131,7 +1215,7 @@ class Connection:
         columnar: bool = False,
     ):
         if params is not None and not self.context.client_settings["server_side_params"]:
-            query = self.substitute_params(query, params, self.context)
+            query = self._substitute(query, params)
 
         await self.send_query(query, query_id=query_id, params=params)
         await self.send_external_tables(external_tables, types_check=types_check)
@@ -1184,7 +1268,7 @@ class Connection:
         columnar: bool = False,
     ):
         if params is not None and not self.context.client_settings["server_side_params"]:
-            query = self.substitute_params(query, params, self.context)
+            query = self._substitute(query, params)
 
         await self.send_query(query, query_id=query_id, params=params)
         await self.send_external_tables(external_tables, types_check=types_check)
@@ -1212,8 +1296,19 @@ class Connection:
 
         await self.block_writer.write(block)
 
+    def _substitute(self, query: str, params: Mapping[str, Any]) -> str:
+        """Substitute parameters, choosing the datetime spelling for this statement."""
+
+        typed_datetime = self.typed_datetime_literals and not has_data_section(query)
+        return self.substitute_params(query, params, self.context, typed_datetime=typed_datetime)
+
     @staticmethod
-    def substitute_params(query: str, params: Mapping[str, Any], context=None) -> str:
+    def substitute_params(
+        query: str,
+        params: Mapping[str, Any],
+        context=None,
+        typed_datetime: bool = False,
+    ) -> str:
         if not isinstance(params, Mapping):
             raise ValueError("Parameters are expected in dict form")
 
@@ -1223,7 +1318,7 @@ class Connection:
         ).lower()
         style = _SUBSTITUTE_PARAMS_STYLE_ALIASES.get(style, style)
 
-        escaped = escape_params(params, context)
+        escaped = escape_params(params, context, typed_datetime=typed_datetime)
         if style == SUBSTITUTE_PARAMS_STYLE_FORMAT:
             return query.format(**escaped)
         if style == SUBSTITUTE_PARAMS_STYLE_PYFORMAT:
@@ -1358,7 +1453,7 @@ class Connection:
         types_check: bool = False,
     ):
         if params is not None and not self.context.client_settings["server_side_params"]:
-            query = self.substitute_params(query, params, self.context)
+            query = self._substitute(query, params)
 
         await self.send_query(query, query_id=query_id, params=params)
         await self.send_external_tables(external_tables, types_check=types_check)

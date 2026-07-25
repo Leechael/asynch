@@ -3,6 +3,8 @@ import logging
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import datetime
+from datetime import timezone as dt_timezone
 from typing import cast
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -11,7 +13,13 @@ import pytest
 from asynch.errors import ErrorCode, NetworkError, ServerException, SocketTimeoutError
 from asynch.proto import constants
 from asynch.proto.block import RowOrientedBlock
-from asynch.proto.connection import METRICS_ENV, SUBSTITUTE_PARAMS_STYLE_ENV, Packet
+from asynch.proto.connection import (
+    METRICS_ENV,
+    SUBSTITUTE_PARAMS_STYLE_ENV,
+    TYPED_DATETIME_ENV,
+    Packet,
+    has_data_section,
+)
 from asynch.proto.connection import (
     Connection as ProtoConnection,
 )
@@ -616,3 +624,151 @@ async def test_watch_zero_limit(proto_conn: ProtoConnection) -> None:
     results = await proto_conn.execute_iter("WATCH lv LIMIT 0")
     async for data in results:
         assert data == (10, 1)
+
+
+def _conn_with_utc_server(**kwargs) -> ProtoConnection:
+    """A connection whose negotiated server timezone is known.
+
+    Only an aware value rebased onto that timezone is spelled as a typed
+    literal, so the spelling cannot be exercised without one.
+    """
+
+    conn = ProtoConnection(**kwargs)
+    conn.context.server_info = ServerInfo(
+        name="ClickHouse",
+        version_major=25,
+        version_minor=4,
+        version_patch=0,
+        revision=54483,
+        timezone="UTC",
+        display_name="test",
+        used_revision=54483,
+    )
+    return conn
+
+
+AWARE_VALUE = datetime(2026, 7, 25, 17, 33, 45, 123456, tzinfo=dt_timezone.utc)
+TYPED_VALUE = "fromUnixTimestamp64Micro(1785000825123456)"
+
+
+@pytest.mark.no_clickhouse
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        (
+            "SELECT count() FROM t WHERE ts >= %(value)s",
+            "fromUnixTimestamp64Micro(1785000825123456)",
+        ),
+        (
+            "ALTER TABLE t UPDATE ts = %(value)s WHERE seq = 1",
+            "fromUnixTimestamp64Micro(1785000825123456)",
+        ),
+        (
+            "INSERT INTO t SELECT * FROM u WHERE ts >= %(value)s",
+            "fromUnixTimestamp64Micro(1785000825123456)",
+        ),
+        # A data section parses through the input format, where servers before
+        # 25.4 refuse a typed literal, so substitution falls back to a bare string.
+        (
+            "INSERT INTO t (ts) VALUES (%(value)s)",
+            "'2026-07-25 17:33:45.123456'",
+        ),
+        (
+            "INSERT INTO t (ts) FORMAT Values (%(value)s)",
+            "'2026-07-25 17:33:45.123456'",
+        ),
+    ],
+)
+def test_datetime_spelling_follows_the_statement_context(query, expected):
+    conn = _conn_with_utc_server()
+
+    substituted = conn._substitute(query, {"value": AWARE_VALUE})
+
+    assert expected in substituted
+
+
+@pytest.mark.no_clickhouse
+def test_typed_datetime_literals_can_be_turned_off():
+    conn = _conn_with_utc_server(typed_datetime_literals=False)
+
+    substituted = conn._substitute(
+        "SELECT count() FROM t WHERE ts >= %(value)s",
+        {"value": AWARE_VALUE},
+    )
+
+    assert substituted.endswith("'2026-07-25 17:33:45.123456'")
+
+
+@pytest.mark.no_clickhouse
+def test_typed_datetime_literals_can_be_turned_off_by_environment(monkeypatch):
+    monkeypatch.setenv(TYPED_DATETIME_ENV, "off")
+    conn = ProtoConnection()
+
+    assert conn.typed_datetime_literals is False
+
+
+@pytest.mark.no_clickhouse
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("INSERT INTO t (a) VALUES (1)", True),
+        ("  insert into t values (1)", True),
+        ("INSERT INTO t (a) VALUES", True),
+        # ClickHouse takes several of these keywords as ordinary identifiers,
+        # and a column list must not answer where the rows come from.
+        ("INSERT INTO t (format, ts) VALUES (%(format)s, %(ts)s)", True),
+        ("INSERT INTO t (from, ts) VALUES (%(from)s, %(ts)s)", True),
+        ("INSERT INTO t (select, values, ts) VALUES (1, 2, %(ts)s)", True),
+        # FORMAT Values reaches the same parser under another spelling, and
+        # every other format takes its data in a syntax of its own.
+        ("INSERT INTO t FORMAT Values\n(%(value)s)", True),
+        ("INSERT INTO t (a, ts) FORMAT Values (1, %(ts)s)", True),
+        ("INSERT INTO t FORMAT JSONEachRow", True),
+        ("INSERT INTO t FORMAT CSV\n1,2", True),
+        # values(...) is a table function feeding a query, not a data section.
+        (
+            "INSERT INTO dst SELECT * FROM values('ts DateTime64(6)', (1)) WHERE ts >= %(v)s",
+            False,
+        ),
+        ("INSERT INTO dst WITH x AS (SELECT 1) SELECT * FROM x", False),
+        ("INSERT INTO t SELECT * FROM u WHERE note = $tag$ VALUES $tag$", False),
+        # The words carry no weight inside a comment or a string, and treating
+        # them as a VALUES section would drop the fraction from this filter.
+        ("SELECT 1 FROM t WHERE ts >= %(v)s -- INSERT INTO x VALUES", False),
+        ("SELECT 1 FROM t WHERE ts >= %(v)s # INSERT INTO x VALUES", False),
+        ("#!INSERT INTO x VALUES\nSELECT 1 FROM t WHERE ts >= %(v)s", False),
+        ("/* INSERT INTO x VALUES (1) */ SELECT 1 FROM t WHERE ts >= %(v)s", False),
+        ("SELECT 1 FROM t WHERE note = 'INSERT INTO x VALUES'", False),
+        ("INSERT INTO t SELECT * FROM u WHERE note = 'VALUES'", False),
+        ("INSERT INTO t SELECT * FROM u WHERE ts >= %(v)s", False),
+        ("ALTER TABLE t UPDATE a = %(v)s WHERE seq = 1", False),
+    ],
+)
+def test_data_section_detection_ignores_comments_and_literals(query, expected):
+    assert has_data_section(query) is expected
+
+
+@pytest.mark.no_clickhouse
+def test_typed_spelling_survives_a_comment_that_mentions_values():
+    conn = _conn_with_utc_server()
+
+    substituted = conn._substitute(
+        "SELECT count() FROM t WHERE ts >= %(value)s -- INSERT INTO x VALUES",
+        {"value": AWARE_VALUE},
+    )
+
+    assert TYPED_VALUE in substituted
+
+
+@pytest.mark.no_clickhouse
+def test_naive_values_keep_the_bare_spelling_whatever_the_context():
+    """Their zone belongs to the target column, which only the server knows."""
+
+    conn = _conn_with_utc_server()
+
+    substituted = conn._substitute(
+        "SELECT count() FROM t WHERE ts >= %(value)s",
+        {"value": datetime(2026, 7, 25, 17, 33, 45, 123456)},
+    )
+
+    assert substituted.endswith("'2026-07-25 17:33:45.123456'")
