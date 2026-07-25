@@ -66,6 +66,10 @@ async def _stored(conn: Connection, table: str, column: str):
     return row[0]
 
 
+async def _execute(conn: Connection, query: str, settings=None):
+    return await conn._connection.execute(query, settings=settings)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("column", "expected"), PRECISIONS)
 async def test_block_path_stores_value_at_column_precision(
@@ -250,3 +254,54 @@ async def test_bare_fractional_string_is_accepted_by_subsecond_column(
         await cursor.execute(f"INSERT INTO {table} (seq, dt64_6) VALUES (1, '{LITERAL}')")
 
     assert await _stored(conn, table, "dt64_6") == MICROSECOND
+
+
+# The VALUES section is the only context that rejects a sub-second value on the
+# LTS servers: the same typed literal compares fine in WHERE everywhere. These
+# probe whether a query setting is enough to make the VALUES section accept one
+# form for every column precision, which would avoid teaching the driver the
+# schema. Each strategy is (name, settings, literal expression).
+INSERT_STRATEGIES = [
+    (
+        "best_effort_text",
+        {"date_time_input_format": "best_effort"},
+        f"'{LITERAL}'",
+    ),
+    (
+        "no_template_deduction_typed",
+        {"input_format_values_deduce_templates_of_expressions": 0},
+        f"toDateTime64('{LITERAL}', 6)",
+    ),
+    (
+        "inaccurate_literal_types_typed",
+        {"input_format_values_accurate_types_of_literals": 0},
+        f"toDateTime64('{LITERAL}', 6)",
+    ),
+]
+
+# A usable strategy has to satisfy both ends at once: truncate for a second
+# precision column and keep every digit for a microsecond one.
+STRATEGY_TARGETS = [("dt", SECOND), ("dt64_6", MICROSECOND)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("name", "settings", "literal"), INSERT_STRATEGIES)
+@pytest.mark.parametrize(("column", "expected"), STRATEGY_TARGETS)
+async def test_insert_strategy_conforms_to_column_definition(
+    conn: Connection,
+    table: str,
+    name: str,
+    settings: dict,
+    literal: str,
+    column: str,
+    expected: datetime,
+):
+    """Server capability probe: can one VALUES form serve every column precision?"""
+
+    await _execute(
+        conn,
+        f"INSERT INTO {table} (seq, {column}) VALUES (1, {literal})",
+        settings=settings,
+    )
+
+    assert await _stored(conn, table, column) == expected
