@@ -22,7 +22,23 @@ escape_chars_map = {
 }
 
 
-def escape_param(item: Any, context=None, for_server: bool = False) -> str:
+def escape_param(
+    item: Any,
+    context=None,
+    for_server: bool = False,
+    typed_datetime: bool = False,
+) -> str:
+    """Render a Python value as ClickHouse SQL text.
+
+    ``typed_datetime`` spells a sub-second datetime as a ``toDateTime64``
+    literal instead of a bare string, so the server receives an instant
+    rather than text it has to reinterpret. It is ignored for whole second
+    values, which need nothing preserved, and for server-side parameters,
+    which travel in a typed slot rather than in the statement text.
+    """
+
+    typed_datetime = typed_datetime and not for_server
+
     if item is None:
         escaped = "NULL"
 
@@ -34,6 +50,8 @@ def escape_param(item: Any, context=None, for_server: bool = False) -> str:
         if item.microsecond:
             fmt += ".%f"
         escaped = "'%s'" % item.strftime(fmt)
+        if typed_datetime and item.microsecond:
+            escaped = "toDateTime64(%s, 6)" % escaped
 
     elif isinstance(item, date):
         escaped = "'%s'" % item.strftime("%Y-%m-%d")
@@ -51,7 +69,12 @@ def escape_param(item: Any, context=None, for_server: bool = False) -> str:
 
     elif isinstance(item, list):
         escaped = "[%s]" % ", ".join(
-            text_type(escape_param(x, context=context, for_server=for_server)) for x in item
+            text_type(
+                escape_param(
+                    x, context=context, for_server=for_server, typed_datetime=typed_datetime
+                )
+            )
+            for x in item
         )
 
     elif isinstance(item, dict):
@@ -63,11 +86,18 @@ def escape_param(item: Any, context=None, for_server: bool = False) -> str:
 
     elif isinstance(item, tuple):
         escaped = "(%s)" % ", ".join(
-            text_type(escape_param(x, context=context, for_server=for_server)) for x in item
+            text_type(
+                escape_param(
+                    x, context=context, for_server=for_server, typed_datetime=typed_datetime
+                )
+            )
+            for x in item
         )
 
     elif isinstance(item, Enum):
-        escaped = escape_param(item.value, context=context, for_server=for_server)
+        escaped = escape_param(
+            item.value, context=context, for_server=for_server, typed_datetime=typed_datetime
+        )
 
     elif isinstance(item, UUID):
         escaped = "'%s'" % str(item)
@@ -81,9 +111,14 @@ def escape_param(item: Any, context=None, for_server: bool = False) -> str:
 
 
 def escape_params(
-    params: Mapping[str, Any], context=None, for_server: bool = False
+    params: Mapping[str, Any],
+    context=None,
+    for_server: bool = False,
+    typed_datetime: bool = False,
 ) -> dict[str, str]:
     return {
-        key: escape_param(value, context=context, for_server=for_server)
+        key: escape_param(
+            value, context=context, for_server=for_server, typed_datetime=typed_datetime
+        )
         for key, value in params.items()
     }

@@ -432,6 +432,10 @@ class DatabaseError(ClickHouseException):
 
 
 class ServerException(DatabaseError):
+    #: Guidance appended after the server's own message by the subclasses below.
+    #: The server reports what went wrong; the hint says what to do about it.
+    hint: Union[None, str] = None
+
     def __init__(self, message, code=None, nested=None):
         self.message = message
         self.code = code
@@ -440,7 +444,53 @@ class ServerException(DatabaseError):
 
     def __str__(self):
         nested = f"\nNested: {self.nested}" if self.nested else ""
-        return f"Code: {self.code}.{nested}\n{self.message}"
+        hint = f"\nHint: {self.hint}" if self.hint else ""
+        return f"Code: {self.code}.{nested}\n{self.message}{hint}"
+
+
+class ServerCannotParseTextError(ServerException):
+    """The server could not parse a text literal into the target column type.
+
+    The common cause is a datetime carrying a sub-second part bound against a
+    second precision ``DateTime`` column. Whether the server accepts it is
+    governed by ``date_time_input_format``, which this driver never overrides.
+    See ``docs/datetime-parameters.md``.
+    """
+
+    hint = (
+        "A text literal did not match the target column type. If the value is a "
+        "datetime with a sub-second part bound against a DateTime column, set "
+        "date_time_input_format='best_effort' or drop the fraction before binding. "
+        "See docs/datetime-parameters.md"
+    )
+
+
+class ServerTypeMismatchError(ServerException):
+    """The server refused a value whose type does not match the target column.
+
+    In a VALUES section, older servers reject a ``toDateTime64`` literal bound
+    against a ``DateTime`` column this way. See ``docs/datetime-parameters.md``.
+    """
+
+    hint = (
+        "The value's type did not match the target column. In a VALUES section, "
+        "servers before 25.4 reject a typed datetime literal for a DateTime column. "
+        "See docs/datetime-parameters.md"
+    )
+
+
+#: Server error codes that carry actionable guidance of their own. Anything else
+#: stays a plain ServerException, so ``except ServerException`` keeps catching all.
+SERVER_EXCEPTION_BY_CODE = {
+    ErrorCode.CANNOT_PARSE_TEXT: ServerCannotParseTextError,
+    ErrorCode.TYPE_MISMATCH: ServerTypeMismatchError,
+}
+
+
+def server_exception_for(code) -> type:
+    """Return the ServerException subclass that matches a server error code."""
+
+    return SERVER_EXCEPTION_BY_CODE.get(code, ServerException)
 
 
 class UnexpectedPacketFromServerError(ClickHouseException):

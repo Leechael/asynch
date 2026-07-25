@@ -3,6 +3,7 @@ import logging
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import cast
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -11,7 +12,12 @@ import pytest
 from asynch.errors import ErrorCode, NetworkError, ServerException, SocketTimeoutError
 from asynch.proto import constants
 from asynch.proto.block import RowOrientedBlock
-from asynch.proto.connection import METRICS_ENV, SUBSTITUTE_PARAMS_STYLE_ENV, Packet
+from asynch.proto.connection import (
+    METRICS_ENV,
+    SUBSTITUTE_PARAMS_STYLE_ENV,
+    TYPED_DATETIME_ENV,
+    Packet,
+)
 from asynch.proto.connection import (
     Connection as ProtoConnection,
 )
@@ -616,3 +622,55 @@ async def test_watch_zero_limit(proto_conn: ProtoConnection) -> None:
     results = await proto_conn.execute_iter("WATCH lv LIMIT 0")
     async for data in results:
         assert data == (10, 1)
+
+
+@pytest.mark.no_clickhouse
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        (
+            "SELECT count() FROM t WHERE ts >= %(value)s",
+            "toDateTime64('2026-07-25 17:33:45.123456', 6)",
+        ),
+        (
+            "ALTER TABLE t UPDATE ts = %(value)s WHERE seq = 1",
+            "toDateTime64('2026-07-25 17:33:45.123456', 6)",
+        ),
+        (
+            "INSERT INTO t SELECT * FROM u WHERE ts >= %(value)s",
+            "toDateTime64('2026-07-25 17:33:45.123456', 6)",
+        ),
+        # A VALUES section parses through the input format, where servers before
+        # 25.4 refuse a typed literal, so substitution falls back to a bare string.
+        (
+            "INSERT INTO t (ts) VALUES (%(value)s)",
+            "'2026-07-25 17:33:45.123456'",
+        ),
+    ],
+)
+def test_datetime_spelling_follows_the_statement_context(query, expected):
+    conn = ProtoConnection()
+
+    substituted = conn._substitute(query, {"value": datetime(2026, 7, 25, 17, 33, 45, 123456)})
+
+    assert expected in substituted
+
+
+@pytest.mark.no_clickhouse
+def test_typed_datetime_literals_can_be_turned_off():
+    conn = ProtoConnection(typed_datetime_literals=False)
+
+    substituted = conn._substitute(
+        "SELECT count() FROM t WHERE ts >= %(value)s",
+        {"value": datetime(2026, 7, 25, 17, 33, 45, 123456)},
+    )
+
+    assert substituted.endswith("'2026-07-25 17:33:45.123456'")
+
+
+@pytest.mark.no_clickhouse
+def test_typed_datetime_literals_can_be_turned_off_by_environment(monkeypatch):
+    monkeypatch.setenv(TYPED_DATETIME_ENV, "off")
+    conn = ProtoConnection()
+
+    assert conn.typed_datetime_literals is False

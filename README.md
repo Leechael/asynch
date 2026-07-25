@@ -182,6 +182,16 @@ async with conn.cursor() as cursor:
 Older ClickHouse servers do not support server-side parameters. In that case,
 use local `pyformat` substitution.
 
+A `datetime` carrying microseconds is spelled as a typed
+`toDateTime64(..., 6)` literal outside of a `VALUES` section, so a filter
+compares at full precision instead of silently widening to the column's
+resolution. Turn it off with `typed_datetime_literals=False` or
+`ASYNCH_TYPED_DATETIME_LITERALS=off`. Whether a `VALUES` section accepts a
+sub-second value at all is governed by the server's own
+`date_time_input_format`, which this driver never overrides. See
+[docs/datetime-parameters.md](docs/datetime-parameters.md) for the full picture,
+including the `Code: 6` and `Code: 53` errors and their remedies.
+
 ## DB-API Compatibility
 
 This is still an async driver, so `execute()`, `fetchone()`, `fetchall()`,

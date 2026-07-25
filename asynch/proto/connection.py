@@ -16,10 +16,10 @@ from uuid import UUID
 from asynch.errors import (
     NetworkError,
     PartiallyConsumedQueryError,
-    ServerException,
     SocketTimeoutError,
     UnexpectedPacketFromServerError,
     UnknownPacketFromServerError,
+    server_exception_for,
 )
 from asynch.proto import constants
 from asynch.proto.block import (
@@ -68,11 +68,29 @@ _SUBSTITUTE_PARAMS_STYLE_ALIASES = {
 }
 _METRICS_TRUE_VALUES = {"1", "true", "on"}
 
+TYPED_DATETIME_ENV = "ASYNCH_TYPED_DATETIME_LITERALS"
+_TYPED_DATETIME_FALSE_VALUES = {"0", "false", "off"}
+
 
 def resolve_metrics_enabled(metrics: Optional[bool]) -> bool:
     if metrics is not None:
         return metrics
     return os.environ.get(METRICS_ENV, "").lower() in _METRICS_TRUE_VALUES
+
+
+def resolve_typed_datetime_literals(typed_datetime_literals: Optional[bool]) -> bool:
+    """Resolve the typed datetime literal switch, which is on unless turned off."""
+
+    if typed_datetime_literals is not None:
+        return typed_datetime_literals
+    return os.environ.get(TYPED_DATETIME_ENV, "").lower() not in _TYPED_DATETIME_FALSE_VALUES
+
+
+# A VALUES section parses its rows with the input format rather than the
+# expression evaluator, and servers before 25.4 refuse a typed datetime literal
+# there whatever date_time_input_format says. Substitution falls back to a bare
+# string for those statements so they keep working.
+_VALUES_SECTION_RE = re.compile(r"\bINSERT\b.*\bVALUES\b", re.IGNORECASE | re.DOTALL)
 
 
 _INSERT_VALUES_PLACEHOLDER_RE = re.compile(
@@ -158,9 +176,11 @@ class Connection:
         settings_is_important=False,
         metrics: Optional[bool] = None,
         buffer_size: Optional[int] = None,
+        typed_datetime_literals: Optional[bool] = None,
         **kwargs,
     ):
         self.stack_track = stack_track
+        self.typed_datetime_literals = resolve_typed_datetime_literals(typed_datetime_literals)
         self.metrics_enabled = self._resolve_metrics_enabled(metrics)
         self.buffer_size = self._resolve_buffer_size(buffer_size)
         self._metrics_query_sent_at = None
@@ -586,7 +606,7 @@ class Connection:
         if has_nested:
             nested = await self.read_exception()
 
-        return ServerException(new_message, code, nested=nested)
+        return server_exception_for(code)(new_message, code, nested=nested)
 
     async def receive_profile_info(self):
         profile_info = BlockStreamProfileInfo(self.reader)
@@ -1131,7 +1151,7 @@ class Connection:
         columnar: bool = False,
     ):
         if params is not None and not self.context.client_settings["server_side_params"]:
-            query = self.substitute_params(query, params, self.context)
+            query = self._substitute(query, params)
 
         await self.send_query(query, query_id=query_id, params=params)
         await self.send_external_tables(external_tables, types_check=types_check)
@@ -1184,7 +1204,7 @@ class Connection:
         columnar: bool = False,
     ):
         if params is not None and not self.context.client_settings["server_side_params"]:
-            query = self.substitute_params(query, params, self.context)
+            query = self._substitute(query, params)
 
         await self.send_query(query, query_id=query_id, params=params)
         await self.send_external_tables(external_tables, types_check=types_check)
@@ -1212,8 +1232,19 @@ class Connection:
 
         await self.block_writer.write(block)
 
+    def _substitute(self, query: str, params: Mapping[str, Any]) -> str:
+        """Substitute parameters, choosing the datetime spelling for this statement."""
+
+        typed_datetime = self.typed_datetime_literals and not _VALUES_SECTION_RE.search(query)
+        return self.substitute_params(query, params, self.context, typed_datetime=typed_datetime)
+
     @staticmethod
-    def substitute_params(query: str, params: Mapping[str, Any], context=None) -> str:
+    def substitute_params(
+        query: str,
+        params: Mapping[str, Any],
+        context=None,
+        typed_datetime: bool = False,
+    ) -> str:
         if not isinstance(params, Mapping):
             raise ValueError("Parameters are expected in dict form")
 
@@ -1223,7 +1254,7 @@ class Connection:
         ).lower()
         style = _SUBSTITUTE_PARAMS_STYLE_ALIASES.get(style, style)
 
-        escaped = escape_params(params, context)
+        escaped = escape_params(params, context, typed_datetime=typed_datetime)
         if style == SUBSTITUTE_PARAMS_STYLE_FORMAT:
             return query.format(**escaped)
         if style == SUBSTITUTE_PARAMS_STYLE_PYFORMAT:
@@ -1358,7 +1389,7 @@ class Connection:
         types_check: bool = False,
     ):
         if params is not None and not self.context.client_settings["server_side_params"]:
-            query = self.substitute_params(query, params, self.context)
+            query = self._substitute(query, params)
 
         await self.send_query(query, query_id=query_id, params=params)
         await self.send_external_tables(external_tables, types_check=types_check)

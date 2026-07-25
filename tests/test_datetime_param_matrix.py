@@ -258,21 +258,31 @@ async def test_where_filter_is_exact_or_rejected(
 
 
 # --------------------------------------------------------------------------
-# What the driver emits today, through real parameter binding.
+# What the driver emits, through real parameter binding, with the typed
+# datetime literal switch both on (the default) and off.
 # --------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="function", params=[True, False], ids=["typed_on", "typed_off"])
+async def driver(config, request) -> Connection:
+    """A connection with the typed datetime literal switch in a known state."""
+
+    async with Connection(dsn=config.dsn, typed_datetime_literals=request.param) as cn:
+        yield cn
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("column", "expected"), PRECISIONS)
 async def test_bound_parameter_insert_is_exact_or_rejected(
     conn: Connection,
+    driver: Connection,
     table: str,
     column: str,
     expected: datetime,
 ):
     """The mapping path under the server's own default configuration."""
 
-    async with conn.cursor() as cursor:
+    async with driver.cursor() as cursor:
         try:
             await cursor.execute(
                 f"INSERT INTO {table} (seq, {column}) VALUES (%(seq)s, %(value)s)",
@@ -288,6 +298,7 @@ async def test_bound_parameter_insert_is_exact_or_rejected(
 @pytest.mark.parametrize(("column", "expected"), PRECISIONS)
 async def test_bound_parameter_insert_beside_expression_is_exact_or_rejected(
     conn: Connection,
+    driver: Connection,
     table: str,
     column: str,
     expected: datetime,
@@ -299,7 +310,7 @@ async def test_bound_parameter_insert_beside_expression_is_exact_or_rejected(
     rewritten into a data insert.
     """
 
-    async with conn.cursor() as cursor:
+    async with driver.cursor() as cursor:
         try:
             await cursor.execute(
                 f"INSERT INTO {table} (seq, {column}) VALUES (rand(), %(value)s)",
@@ -315,6 +326,7 @@ async def test_bound_parameter_insert_beside_expression_is_exact_or_rejected(
 @pytest.mark.parametrize("column", [name for name, _ in PRECISIONS])
 async def test_bound_parameter_filter_is_exact_or_rejected(
     conn: Connection,
+    driver: Connection,
     table: str,
     column: str,
 ):
@@ -322,7 +334,7 @@ async def test_bound_parameter_filter_is_exact_or_rejected(
 
     await _seed(conn, table, column, SECOND)
 
-    async with conn.cursor() as cursor:
+    async with driver.cursor() as cursor:
         try:
             await cursor.execute(
                 f"SELECT count() FROM {table} WHERE {column} >= %(value)s",
@@ -346,6 +358,7 @@ async def test_bound_parameter_filter_is_exact_or_rejected(
 @pytest.mark.parametrize(("column", "expected"), PRECISIONS)
 async def test_bound_parameter_mutation_is_exact_or_rejected(
     conn: Connection,
+    driver: Connection,
     mutable_table: str,
     column: str,
     expected: datetime,
@@ -356,7 +369,7 @@ async def test_bound_parameter_mutation_is_exact_or_rejected(
 
     try:
         await _execute(
-            conn,
+            driver,
             f"ALTER TABLE {mutable_table} UPDATE {column} = %(value)s WHERE seq = 1",
             args={"value": VALUE},
             settings={"mutations_sync": 1},
