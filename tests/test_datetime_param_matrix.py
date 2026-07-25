@@ -27,7 +27,10 @@ SECOND = datetime(2026, 7, 25, 17, 33, 45)
 MILLISECOND = datetime(2026, 7, 25, 17, 33, 45, 123000)
 MICROSECOND = datetime(2026, 7, 25, 17, 33, 45, 123456)
 
+JUST_BEFORE = datetime(2026, 7, 25, 17, 33, 44, 999999)
+
 LITERAL = "2026-07-25 17:33:45.123456"
+LITERAL_JUST_BEFORE = "2026-07-25 17:33:44.999999"
 
 TABLE_COLUMNS = """
     seq          UInt32,
@@ -59,6 +62,20 @@ async def table(conn: Connection) -> str:
         await cursor.execute(f"DROP TABLE IF EXISTS {name}")
 
 
+@pytest.fixture(scope="function")
+async def mutable_table(conn: Connection) -> str:
+    """Mutations need a MergeTree table; the Memory engine rejects ALTER UPDATE."""
+
+    name = f"test.dt_mut_{uuid.uuid4().hex[:8]}"
+    async with conn.cursor() as cursor:
+        await cursor.execute(
+            f"CREATE TABLE {name} ({TABLE_COLUMNS}) ENGINE = MergeTree ORDER BY seq"
+        )
+    yield name
+    async with conn.cursor() as cursor:
+        await cursor.execute(f"DROP TABLE IF EXISTS {name}")
+
+
 async def _stored(conn: Connection, table: str, column: str):
     async with conn.cursor() as cursor:
         await cursor.execute(f"SELECT {column} FROM {table}")
@@ -66,8 +83,18 @@ async def _stored(conn: Connection, table: str, column: str):
     return row[0]
 
 
-async def _execute(conn: Connection, query: str, settings=None):
-    return await conn._connection.execute(query, settings=settings)
+async def _execute(conn: Connection, query: str, args=None, settings=None):
+    return await conn._connection.execute(query, args=args, settings=settings)
+
+
+async def _seed(conn: Connection, table: str, column: str, value: datetime) -> None:
+    """Store a value through the block path, which already honours the column."""
+
+    await _execute(
+        conn,
+        f"INSERT INTO {table} (seq, {column}) VALUES (%(seq)s, %({column})s)",
+        [{"seq": 1, column: value}],
+    )
 
 
 @pytest.mark.asyncio
@@ -137,27 +164,58 @@ async def test_mapping_path_with_server_side_expression_stores_at_column_precisi
 
 
 @pytest.mark.asyncio
-async def test_mapping_path_datetime_filter_compares_against_second_precision_column(
+@pytest.mark.parametrize("column", [name for name, _ in PRECISIONS])
+async def test_where_filter_uses_full_precision_of_bound_value(
     conn: Connection,
     table: str,
+    column: str,
 ):
-    """The same escaping serves SELECT, so a bound datetime must compare sanely."""
+    """The same escaping serves reads: a bound datetime must compare exactly.
+
+    Every column holds the same whole second, so a bound value one fraction
+    later must exclude the row and one fraction earlier must keep it. Losing the
+    fraction on the way in silently widens the filter instead of failing.
+    """
+
+    await _seed(conn, table, column, SECOND)
 
     async with conn.cursor() as cursor:
-        await cursor.executemany(
-            f"INSERT INTO {table} (seq, dt) VALUES (%(seq)s, %(dt)s)",
-            [{"seq": 1, "dt": SECOND}],
-        )
-
         await cursor.execute(
-            f"SELECT count() FROM {table} WHERE dt >= %(value)s",
+            f"SELECT count() FROM {table} WHERE {column} >= %(value)s",
             {"value": VALUE},
         )
         after = await cursor.fetchone()
 
         await cursor.execute(
-            f"SELECT count() FROM {table} WHERE dt >= %(value)s",
-            {"value": datetime(2026, 7, 25, 17, 33, 44, 999999)},
+            f"SELECT count() FROM {table} WHERE {column} >= %(value)s",
+            {"value": JUST_BEFORE},
+        )
+        before = await cursor.fetchone()
+
+    assert after[0] == 0
+    assert before[0] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("column", [name for name, _ in PRECISIONS])
+async def test_where_filter_with_typed_literal_uses_full_precision(
+    conn: Connection,
+    table: str,
+    column: str,
+):
+    """Server capability probe: the typed literal form in the same comparisons."""
+
+    await _seed(conn, table, column, SECOND)
+
+    async with conn.cursor() as cursor:
+        await cursor.execute(
+            f"SELECT count() FROM {table} WHERE {column} >= toDateTime64('{LITERAL}', 6)"
+        )
+        after = await cursor.fetchone()
+
+        await cursor.execute(
+            f"SELECT count() FROM {table} "
+            f"WHERE {column} >= toDateTime64('{LITERAL_JUST_BEFORE}', 6)"
         )
         before = await cursor.fetchone()
 
@@ -205,30 +263,53 @@ async def test_typed_literal_into_string_column_keeps_microseconds(
 
 
 @pytest.mark.asyncio
-async def test_typed_literal_compares_against_second_precision_column(
+@pytest.mark.parametrize(("column", "expected"), PRECISIONS)
+async def test_mutation_sets_value_at_column_precision(
     conn: Connection,
-    table: str,
+    mutable_table: str,
+    column: str,
+    expected: datetime,
 ):
-    """Server capability probe: the typed literal must also work in WHERE."""
+    """ALTER UPDATE evaluates its SET as an expression, not through VALUES."""
 
-    async with conn.cursor() as cursor:
-        await cursor.executemany(
-            f"INSERT INTO {table} (seq, dt) VALUES (%(seq)s, %(dt)s)",
-            [{"seq": 1, "dt": SECOND}],
-        )
+    await _seed(conn, mutable_table, column, SECOND)
+    await _execute(
+        conn,
+        f"ALTER TABLE {mutable_table} UPDATE {column} = %(value)s WHERE seq = 1",
+        args={"value": VALUE},
+        settings={"mutations_sync": 1},
+    )
 
-        await cursor.execute(
-            f"SELECT count() FROM {table} WHERE dt >= toDateTime64('{LITERAL}', 6)"
-        )
-        after = await cursor.fetchone()
+    assert await _stored(conn, mutable_table, column) == expected
 
-        await cursor.execute(
-            f"SELECT count() FROM {table} WHERE dt >= toDateTime64('2026-07-25 17:33:44.999999', 6)"
-        )
-        before = await cursor.fetchone()
 
-    assert after[0] == 0
-    assert before[0] == 1
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("column", "expected"), PRECISIONS)
+async def test_mutation_with_typed_literal_sets_value_at_column_precision(
+    conn: Connection,
+    mutable_table: str,
+    column: str,
+    expected: datetime,
+):
+    """Server capability probe: the typed literal form in a mutation."""
+
+    await _seed(conn, mutable_table, column, SECOND)
+    await _execute(
+        conn,
+        f"ALTER TABLE {mutable_table} UPDATE {column} = toDateTime64('{LITERAL}', 6) WHERE seq = 1",
+        settings={"mutations_sync": 1},
+    )
+
+    assert await _stored(conn, mutable_table, column) == expected
+
+
+@pytest.mark.asyncio
+async def test_select_projects_typed_literal_at_full_precision(conn: Connection):
+    """The read direction: a sub-second value must decode without losing digits."""
+
+    rows = await _execute(conn, f"SELECT toDateTime64('{LITERAL}', 6)")
+
+    assert rows[0][0] == MICROSECOND
 
 
 @pytest.mark.asyncio
