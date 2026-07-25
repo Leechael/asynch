@@ -74,12 +74,16 @@ async def test_block_path_stores_value_at_column_precision(
     column: str,
     expected: datetime,
 ):
-    """Sequence args reach the typed block writers, which honour the column."""
+    """Sequence args reach the typed block writers, which honour the column.
+
+    Dict rows are matched to the sample block by column name (``block.py:204``),
+    so the keys have to be the column names rather than the placeholder names.
+    """
 
     async with conn.cursor() as cursor:
         await cursor.executemany(
-            f"INSERT INTO {table} (seq, {column}) VALUES (%(seq)s, %(value)s)",
-            [{"seq": 1, "value": VALUE}],
+            f"INSERT INTO {table} (seq, {column}) VALUES (%(seq)s, %({column})s)",
+            [{"seq": 1, column: VALUE}],
         )
 
     assert await _stored(conn, table, column) == expected
@@ -137,8 +141,8 @@ async def test_mapping_path_datetime_filter_compares_against_second_precision_co
 
     async with conn.cursor() as cursor:
         await cursor.executemany(
-            f"INSERT INTO {table} (seq, dt) VALUES (%(seq)s, %(value)s)",
-            [{"seq": 1, "value": SECOND}],
+            f"INSERT INTO {table} (seq, dt) VALUES (%(seq)s, %(dt)s)",
+            [{"seq": 1, "dt": SECOND}],
         )
 
         await cursor.execute(
@@ -205,8 +209,8 @@ async def test_typed_literal_compares_against_second_precision_column(
 
     async with conn.cursor() as cursor:
         await cursor.executemany(
-            f"INSERT INTO {table} (seq, dt) VALUES (%(seq)s, %(value)s)",
-            [{"seq": 1, "value": SECOND}],
+            f"INSERT INTO {table} (seq, dt) VALUES (%(seq)s, %(dt)s)",
+            [{"seq": 1, "dt": SECOND}],
         )
 
         await cursor.execute(
