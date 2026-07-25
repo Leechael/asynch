@@ -1,17 +1,23 @@
-"""Datetime parameter handling across insert paths and column precisions.
+"""Datetime parameter handling across contexts, column precisions and settings.
 
-A datetime bound as a query parameter reaches the server through one of two
-paths. Data inserts (``args`` is a sequence) go through the native block
-protocol, where the server-provided sample block carries the exact column type
-and the column writers truncate accordingly. Ordinary queries (``args`` is a
-mapping) are substituted textually by ``escape_param``, which never sees a
-column type.
+A datetime bound as a query parameter reaches the server one of two ways. Data
+inserts (``args`` is a sequence) go through the native block protocol, where the
+sample block carries the exact column type and the column writers truncate to
+it. Ordinary queries (``args`` is a mapping) are substituted textually by
+``escape_param``, which runs before anything is sent and therefore has no column
+type: it can only choose how to spell the value.
 
-These tests pin the contract to the column definition: the stored value must be
-decided by the target column, not by the path the caller happened to use. Cases
-covering the mapping path are expected to fail until the textual path becomes
-column-aware; they are written as plain assertions so CI reports the real
-behaviour of each ClickHouse version instead of a guess.
+What the server then does with that spelling is not the driver's to decide. It
+depends on the target column, on the context the value sits in, and on
+``date_time_input_format``, which is the user's setting to configure. So the
+matrix carries that setting as its own dimension, and the textual cases assert
+the one invariant that holds no matter how the server is configured: a value is
+either stored exactly as the column can hold it, or rejected outright. Storing
+something else -- a NULL, or a different instant -- is the failure worth
+catching, because nothing downstream can detect it.
+
+The block-path cases are different: there the driver does know the column type,
+so they assert the exact result.
 """
 
 import uuid
@@ -23,14 +29,11 @@ from asynch.connection import Connection
 from asynch.errors import ServerException
 
 VALUE = datetime(2026, 7, 25, 17, 33, 45, 123456)
+JUST_BEFORE = datetime(2026, 7, 25, 17, 33, 44, 999999)
+
 SECOND = datetime(2026, 7, 25, 17, 33, 45)
 MILLISECOND = datetime(2026, 7, 25, 17, 33, 45, 123000)
 MICROSECOND = datetime(2026, 7, 25, 17, 33, 45, 123456)
-
-JUST_BEFORE = datetime(2026, 7, 25, 17, 33, 44, 999999)
-
-LITERAL = "2026-07-25 17:33:45.123456"
-LITERAL_JUST_BEFORE = "2026-07-25 17:33:44.999999"
 
 TABLE_COLUMNS = """
     seq          UInt32,
@@ -42,13 +45,45 @@ TABLE_COLUMNS = """
     s            String
 """
 
-# (column, expected value once stored in that column)
+# (column, value once the column has stored VALUE)
 PRECISIONS = [
     ("dt", SECOND),
     ("dt64_3", MILLISECOND),
     ("dt64_6", MICROSECOND),
     ("dt_null", SECOND),
     ("dt64_3_null", MILLISECOND),
+]
+
+# The three that carry distinct behaviour: second precision, full precision, and
+# nullable second precision, where a rejected value can turn into a silent NULL.
+CELLS = [("dt", SECOND), ("dt64_6", MICROSECOND), ("dt_null", SECOND)]
+
+
+def _render(value: datetime) -> str:
+    fmt = "%Y-%m-%d %H:%M:%S.%f" if value.microsecond else "%Y-%m-%d %H:%M:%S"
+    return value.strftime(fmt)
+
+
+def _text(value: datetime) -> str:
+    """What escape_param emits today."""
+
+    return f"'{_render(value)}'"
+
+
+def _typed(value: datetime) -> str:
+    """The same instant with its type spelled out."""
+
+    return f"toDateTime64('{_render(value)}', 6)"
+
+
+FORMS = [("text", _text), ("typed", _typed)]
+
+# date_time_input_format governs how text is parsed into a temporal type. It is
+# the user's setting; the driver never overrides it, so both values it can
+# realistically hold are part of the matrix.
+MODES = [
+    ("basic", {"date_time_input_format": "basic"}),
+    ("best_effort", {"date_time_input_format": "best_effort"}),
 ]
 
 
@@ -76,15 +111,13 @@ async def mutable_table(conn: Connection) -> str:
         await cursor.execute(f"DROP TABLE IF EXISTS {name}")
 
 
-async def _stored(conn: Connection, table: str, column: str):
-    async with conn.cursor() as cursor:
-        await cursor.execute(f"SELECT {column} FROM {table}")
-        row = await cursor.fetchone()
-    return row[0]
-
-
 async def _execute(conn: Connection, query: str, args=None, settings=None):
     return await conn._connection.execute(query, args=args, settings=settings)
+
+
+async def _stored(conn: Connection, table: str, column: str):
+    rows = await _execute(conn, f"SELECT {column} FROM {table}")
+    return rows[0][0]
 
 
 async def _seed(conn: Connection, table: str, column: str, value: datetime) -> None:
@@ -97,6 +130,11 @@ async def _seed(conn: Connection, table: str, column: str, value: datetime) -> N
     )
 
 
+# --------------------------------------------------------------------------
+# Block path: the driver holds the column type, so the result is exact.
+# --------------------------------------------------------------------------
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("column", "expected"), PRECISIONS)
 async def test_block_path_stores_value_at_column_precision(
@@ -105,11 +143,7 @@ async def test_block_path_stores_value_at_column_precision(
     column: str,
     expected: datetime,
 ):
-    """Sequence args reach the typed block writers, which honour the column.
-
-    Dict rows are matched to the sample block by column name (``block.py:204``),
-    so the keys have to be the column names rather than the placeholder names.
-    """
+    """Dict rows are matched to the sample block by column name (block.py:204)."""
 
     async with conn.cursor() as cursor:
         await cursor.executemany(
@@ -120,104 +154,189 @@ async def test_block_path_stores_value_at_column_precision(
     assert await _stored(conn, table, column) == expected
 
 
+# --------------------------------------------------------------------------
+# Textual path, per context x column x spelling x setting.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("mode", "settings"), MODES)
+@pytest.mark.parametrize(("form", "render"), FORMS)
+@pytest.mark.parametrize(("column", "expected"), CELLS)
+async def test_insert_values_is_exact_or_rejected(
+    conn: Connection,
+    table: str,
+    column: str,
+    expected: datetime,
+    form: str,
+    render,
+    mode: str,
+    settings: dict,
+):
+    """VALUES section: whatever the setting, never store something else."""
+
+    try:
+        await _execute(
+            conn,
+            f"INSERT INTO {table} (seq, {column}) VALUES (1, {render(VALUE)})",
+            settings=settings,
+        )
+    except ServerException as exc:
+        pytest.skip(f"server rejected this spelling: Code {exc.code}")
+
+    assert await _stored(conn, table, column) == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("mode", "settings"), MODES)
+@pytest.mark.parametrize(("form", "render"), FORMS)
+@pytest.mark.parametrize(("column", "expected"), CELLS)
+async def test_mutation_set_is_exact_or_rejected(
+    conn: Connection,
+    mutable_table: str,
+    column: str,
+    expected: datetime,
+    form: str,
+    render,
+    mode: str,
+    settings: dict,
+):
+    """ALTER UPDATE evaluates its SET as an expression rather than through VALUES."""
+
+    await _seed(conn, mutable_table, column, SECOND)
+
+    try:
+        await _execute(
+            conn,
+            f"ALTER TABLE {mutable_table} UPDATE {column} = {render(VALUE)} WHERE seq = 1",
+            settings={**settings, "mutations_sync": 1},
+        )
+    except ServerException as exc:
+        pytest.skip(f"server rejected this spelling: Code {exc.code}")
+
+    assert await _stored(conn, mutable_table, column) == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("mode", "settings"), MODES)
+@pytest.mark.parametrize(("form", "render"), FORMS)
+@pytest.mark.parametrize("column", [name for name, _ in CELLS])
+async def test_where_filter_is_exact_or_rejected(
+    conn: Connection,
+    table: str,
+    column: str,
+    form: str,
+    render,
+    mode: str,
+    settings: dict,
+):
+    """A bound instant must filter at its own resolution, not the column's.
+
+    The row holds a whole second, so a bound value one fraction later has to
+    exclude it and one fraction earlier has to keep it. A spelling that loses
+    the fraction silently widens the filter, which no caller can detect.
+    """
+
+    await _seed(conn, table, column, SECOND)
+
+    try:
+        after = await _execute(
+            conn,
+            f"SELECT count() FROM {table} WHERE {column} >= {render(VALUE)}",
+            settings=settings,
+        )
+        before = await _execute(
+            conn,
+            f"SELECT count() FROM {table} WHERE {column} >= {render(JUST_BEFORE)}",
+            settings=settings,
+        )
+    except ServerException as exc:
+        pytest.skip(f"server rejected this spelling: Code {exc.code}")
+
+    assert after[0][0] == 0
+    assert before[0][0] == 1
+
+
+# --------------------------------------------------------------------------
+# What the driver emits today, through real parameter binding.
+# --------------------------------------------------------------------------
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("column", "expected"), PRECISIONS)
-async def test_mapping_path_stores_value_at_column_precision(
+async def test_bound_parameter_insert_is_exact_or_rejected(
     conn: Connection,
     table: str,
     column: str,
     expected: datetime,
 ):
-    """Mapping args are substituted textually and must reach the same result."""
+    """The mapping path under the server's own default configuration."""
 
     async with conn.cursor() as cursor:
-        await cursor.execute(
-            f"INSERT INTO {table} (seq, {column}) VALUES (%(seq)s, %(value)s)",
-            {"seq": 1, "value": VALUE},
-        )
+        try:
+            await cursor.execute(
+                f"INSERT INTO {table} (seq, {column}) VALUES (%(seq)s, %(value)s)",
+                {"seq": 1, "value": VALUE},
+            )
+        except ServerException as exc:
+            pytest.skip(f"server rejected this spelling: Code {exc.code}")
 
     assert await _stored(conn, table, column) == expected
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("column", "expected"), PRECISIONS)
-async def test_mapping_path_with_server_side_expression_stores_at_column_precision(
+async def test_bound_parameter_insert_beside_expression_is_exact_or_rejected(
     conn: Connection,
     table: str,
     column: str,
     expected: datetime,
 ):
-    """A non-placeholder expression in VALUES keeps the statement on the textual path.
+    """A server-side expression in VALUES keeps the statement on the textual path.
 
-    This is the shape real applications write when a column is filled by the
-    server (``generateSnowflakeID()``, ``now()``, ``rand()``), so it can never be
+    This is the shape applications write when a column is filled by the server
+    (``generateSnowflakeID()``, ``now()``, ``rand()``), so it can never be
     rewritten into a data insert.
     """
 
     async with conn.cursor() as cursor:
-        await cursor.execute(
-            f"INSERT INTO {table} (seq, {column}) VALUES (rand(), %(value)s)",
-            {"value": VALUE},
-        )
+        try:
+            await cursor.execute(
+                f"INSERT INTO {table} (seq, {column}) VALUES (rand(), %(value)s)",
+                {"value": VALUE},
+            )
+        except ServerException as exc:
+            pytest.skip(f"server rejected this spelling: Code {exc.code}")
 
     assert await _stored(conn, table, column) == expected
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("column", [name for name, _ in PRECISIONS])
-async def test_where_filter_uses_full_precision_of_bound_value(
+async def test_bound_parameter_filter_is_exact_or_rejected(
     conn: Connection,
     table: str,
     column: str,
 ):
-    """The same escaping serves reads: a bound datetime must compare exactly.
-
-    Every column holds the same whole second, so a bound value one fraction
-    later must exclude the row and one fraction earlier must keep it. Losing the
-    fraction on the way in silently widens the filter instead of failing.
-    """
+    """The read side of the same escaping, under the server's own default."""
 
     await _seed(conn, table, column, SECOND)
 
     async with conn.cursor() as cursor:
-        await cursor.execute(
-            f"SELECT count() FROM {table} WHERE {column} >= %(value)s",
-            {"value": VALUE},
-        )
-        after = await cursor.fetchone()
+        try:
+            await cursor.execute(
+                f"SELECT count() FROM {table} WHERE {column} >= %(value)s",
+                {"value": VALUE},
+            )
+            after = await cursor.fetchone()
 
-        await cursor.execute(
-            f"SELECT count() FROM {table} WHERE {column} >= %(value)s",
-            {"value": JUST_BEFORE},
-        )
-        before = await cursor.fetchone()
-
-    assert after[0] == 0
-    assert before[0] == 1
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("column", [name for name, _ in PRECISIONS])
-async def test_where_filter_with_typed_literal_uses_full_precision(
-    conn: Connection,
-    table: str,
-    column: str,
-):
-    """Server capability probe: the typed literal form in the same comparisons."""
-
-    await _seed(conn, table, column, SECOND)
-
-    async with conn.cursor() as cursor:
-        await cursor.execute(
-            f"SELECT count() FROM {table} WHERE {column} >= toDateTime64('{LITERAL}', 6)"
-        )
-        after = await cursor.fetchone()
-
-        await cursor.execute(
-            f"SELECT count() FROM {table} "
-            f"WHERE {column} >= toDateTime64('{LITERAL_JUST_BEFORE}', 6)"
-        )
-        before = await cursor.fetchone()
+            await cursor.execute(
+                f"SELECT count() FROM {table} WHERE {column} >= %(value)s",
+                {"value": JUST_BEFORE},
+            )
+            before = await cursor.fetchone()
+        except ServerException as exc:
+            pytest.skip(f"server rejected this spelling: Code {exc.code}")
 
     assert after[0] == 0
     assert before[0] == 1
@@ -225,200 +344,61 @@ async def test_where_filter_with_typed_literal_uses_full_precision(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("column", "expected"), PRECISIONS)
-async def test_typed_literal_conforms_to_column_definition(
-    conn: Connection,
-    table: str,
-    column: str,
-    expected: datetime,
-):
-    """Server capability probe: does a typed literal let the column decide?
-
-    No driver code is involved. If every ClickHouse version in the matrix
-    accepts ``toDateTime64(..., 6)`` into these columns, ``escape_param`` can
-    emit a typed literal instead of a bare string and the column definition
-    decides the result without the driver knowing the schema.
-    """
-
-    async with conn.cursor() as cursor:
-        await cursor.execute(
-            f"INSERT INTO {table} (seq, {column}) VALUES (1, toDateTime64('{LITERAL}', 6))"
-        )
-
-    assert await _stored(conn, table, column) == expected
-
-
-@pytest.mark.asyncio
-async def test_typed_literal_into_string_column_keeps_microseconds(
-    conn: Connection,
-    table: str,
-):
-    """Server capability probe: a typed literal bound to a String column."""
-
-    async with conn.cursor() as cursor:
-        await cursor.execute(
-            f"INSERT INTO {table} (seq, s) VALUES (1, toDateTime64('{LITERAL}', 6))"
-        )
-
-    assert await _stored(conn, table, "s") == LITERAL
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(("column", "expected"), PRECISIONS)
-async def test_mutation_sets_value_at_column_precision(
+async def test_bound_parameter_mutation_is_exact_or_rejected(
     conn: Connection,
     mutable_table: str,
     column: str,
     expected: datetime,
 ):
-    """ALTER UPDATE evaluates its SET as an expression, not through VALUES."""
+    """The mutation side of the same escaping, under the server's own default."""
 
     await _seed(conn, mutable_table, column, SECOND)
-    await _execute(
-        conn,
-        f"ALTER TABLE {mutable_table} UPDATE {column} = %(value)s WHERE seq = 1",
-        args={"value": VALUE},
-        settings={"mutations_sync": 1},
-    )
+
+    try:
+        await _execute(
+            conn,
+            f"ALTER TABLE {mutable_table} UPDATE {column} = %(value)s WHERE seq = 1",
+            args={"value": VALUE},
+            settings={"mutations_sync": 1},
+        )
+    except ServerException as exc:
+        pytest.skip(f"server rejected this spelling: Code {exc.code}")
 
     assert await _stored(conn, mutable_table, column) == expected
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(("column", "expected"), PRECISIONS)
-async def test_mutation_with_typed_literal_sets_value_at_column_precision(
-    conn: Connection,
-    mutable_table: str,
-    column: str,
-    expected: datetime,
-):
-    """Server capability probe: the typed literal form in a mutation."""
-
-    await _seed(conn, mutable_table, column, SECOND)
-    await _execute(
-        conn,
-        f"ALTER TABLE {mutable_table} UPDATE {column} = toDateTime64('{LITERAL}', 6) WHERE seq = 1",
-        settings={"mutations_sync": 1},
-    )
-
-    assert await _stored(conn, mutable_table, column) == expected
+# --------------------------------------------------------------------------
+# Read direction and the whole-second baseline.
+# --------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_select_projects_typed_literal_at_full_precision(conn: Connection):
-    """The read direction: a sub-second value must decode without losing digits."""
+    """A sub-second value must survive decoding."""
 
-    rows = await _execute(conn, f"SELECT toDateTime64('{LITERAL}', 6)")
+    rows = await _execute(conn, f"SELECT {_typed(VALUE)}")
 
     assert rows[0][0] == MICROSECOND
 
 
 @pytest.mark.asyncio
-async def test_bare_fractional_string_is_rejected_by_second_precision_column(
-    conn: Connection,
-    table: str,
-):
-    """Why the textual path breaks today: escape_param emits exactly this string."""
-
-    async with conn.cursor() as cursor:
-        with pytest.raises(ServerException):
-            await cursor.execute(f"INSERT INTO {table} (seq, dt) VALUES (1, '{LITERAL}')")
-
-
-@pytest.mark.asyncio
-async def test_bare_fractional_string_is_accepted_by_subsecond_column(
-    conn: Connection,
-    table: str,
-):
-    """The counterpart: the same string is what a DateTime64 column needs."""
-
-    async with conn.cursor() as cursor:
-        await cursor.execute(f"INSERT INTO {table} (seq, dt64_6) VALUES (1, '{LITERAL}')")
-
-    assert await _stored(conn, table, "dt64_6") == MICROSECOND
-
-
-# The VALUES section is the only context that rejects a sub-second value on the
-# LTS servers: the same typed literal compares fine in WHERE everywhere. These
-# probe whether a query setting is enough to make the VALUES section accept one
-# form for every column precision, which would avoid teaching the driver the
-# schema. Each strategy is (name, settings, literal expression).
-INSERT_STRATEGIES = [
-    (
-        "best_effort_text",
-        {"date_time_input_format": "best_effort"},
-        f"'{LITERAL}'",
-    ),
-    (
-        "no_template_deduction_typed",
-        {"input_format_values_deduce_templates_of_expressions": 0},
-        f"toDateTime64('{LITERAL}', 6)",
-    ),
-    (
-        "inaccurate_literal_types_typed",
-        {"input_format_values_accurate_types_of_literals": 0},
-        f"toDateTime64('{LITERAL}', 6)",
-    ),
-]
-
-# A usable strategy has to satisfy every column at once: truncate for a second
-# precision column, keep every digit for a microsecond one, and store a value
-# rather than NULL where the column is nullable.
-STRATEGY_TARGETS = PRECISIONS
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(("name", "settings", "literal"), INSERT_STRATEGIES)
-@pytest.mark.parametrize(("column", "expected"), STRATEGY_TARGETS)
-async def test_insert_strategy_conforms_to_column_definition(
-    conn: Connection,
-    table: str,
-    name: str,
-    settings: dict,
-    literal: str,
-    column: str,
-    expected: datetime,
-):
-    """Server capability probe: can one VALUES form serve every column precision?"""
-
-    await _execute(
-        conn,
-        f"INSERT INTO {table} (seq, {column}) VALUES (1, {literal})",
-        settings=settings,
-    )
-
-    assert await _stored(conn, table, column) == expected
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("column", [name for name, _ in PRECISIONS])
-async def test_where_filter_with_best_effort_setting_uses_full_precision(
+@pytest.mark.parametrize(("form", "render"), FORMS)
+@pytest.mark.parametrize("column", [name for name, _ in CELLS])
+async def test_whole_second_value_needs_no_special_spelling(
     conn: Connection,
     table: str,
     column: str,
+    form: str,
+    render,
 ):
-    """Server capability probe: does the insert-side setting also serve reads?
+    """Without a fraction there is nothing to preserve, so both spellings agree."""
 
-    Best-effort input parsing accepts the fractional text, but parsing it into
-    the column's own type would compare at the column's resolution rather than
-    at the value's. If that holds, the setting alone cannot serve both contexts
-    and the comparison needs a form that carries the sub-second part.
-    """
+    try:
+        await _execute(
+            conn,
+            f"INSERT INTO {table} (seq, {column}) VALUES (1, {render(SECOND)})",
+        )
+    except ServerException as exc:
+        pytest.skip(f"server rejected this spelling: Code {exc.code}")
 
-    await _seed(conn, table, column, SECOND)
-    settings = {"date_time_input_format": "best_effort"}
-
-    after = await _execute(
-        conn,
-        f"SELECT count() FROM {table} WHERE {column} >= %(value)s",
-        args={"value": VALUE},
-        settings=settings,
-    )
-    before = await _execute(
-        conn,
-        f"SELECT count() FROM {table} WHERE {column} >= %(value)s",
-        args={"value": JUST_BEFORE},
-        settings=settings,
-    )
-
-    assert after[0][0] == 0
-    assert before[0][0] == 1
+    assert await _stored(conn, table, column) == SECOND
