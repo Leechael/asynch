@@ -1,5 +1,26 @@
 # ChangeLog
 
+## 0.4
+
+### 0.4.0rc3
+
+- Send an aware `datetime` parameter as the instant it denotes,
+  `fromUnixTimestamp64Micro(...)`, rather than as a wall-time string, unless the
+  statement carries its rows as a payload (`VALUES`, `FORMAT`), where servers
+  before 25.4 refuse a typed literal. A filter now compares at full precision
+  instead of widening to the column's resolution, a column carrying its own
+  timezone no longer shifts the value, and a daylight saving fall-back hour no
+  longer makes two instants look alike. A naive value keeps the plain string:
+  its zone belongs to the target column, and only the server can resolve that.
+  Turn the spelling off with `typed_datetime_literals=False` or
+  `ASYNCH_TYPED_DATETIME_LITERALS=off`.
+- Give the two server error codes this surfaces their own `ServerException`
+  subclasses, `ServerCannotParseTextError` (Code 6) and `ServerTypeMismatchError`
+  (Code 53), each carrying its remedy. Both remain `ServerException`, so
+  existing handlers are unaffected.
+- Document the whole path, including what `date_time_input_format` governs and
+  the one case no spelling can rescue, in `docs/datetime-parameters.md`.
+
 ## 0.3
 
 ### 0.3.1
