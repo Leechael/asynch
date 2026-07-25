@@ -360,9 +360,10 @@ INSERT_STRATEGIES = [
     ),
 ]
 
-# A usable strategy has to satisfy both ends at once: truncate for a second
-# precision column and keep every digit for a microsecond one.
-STRATEGY_TARGETS = [("dt", SECOND), ("dt64_6", MICROSECOND)]
+# A usable strategy has to satisfy every column at once: truncate for a second
+# precision column, keep every digit for a microsecond one, and store a value
+# rather than NULL where the column is nullable.
+STRATEGY_TARGETS = PRECISIONS
 
 
 @pytest.mark.asyncio
@@ -386,3 +387,38 @@ async def test_insert_strategy_conforms_to_column_definition(
     )
 
     assert await _stored(conn, table, column) == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("column", [name for name, _ in PRECISIONS])
+async def test_where_filter_with_best_effort_setting_uses_full_precision(
+    conn: Connection,
+    table: str,
+    column: str,
+):
+    """Server capability probe: does the insert-side setting also serve reads?
+
+    Best-effort input parsing accepts the fractional text, but parsing it into
+    the column's own type would compare at the column's resolution rather than
+    at the value's. If that holds, the setting alone cannot serve both contexts
+    and the comparison needs a form that carries the sub-second part.
+    """
+
+    await _seed(conn, table, column, SECOND)
+    settings = {"date_time_input_format": "best_effort"}
+
+    after = await _execute(
+        conn,
+        f"SELECT count() FROM {table} WHERE {column} >= %(value)s",
+        args={"value": VALUE},
+        settings=settings,
+    )
+    before = await _execute(
+        conn,
+        f"SELECT count() FROM {table} WHERE {column} >= %(value)s",
+        args={"value": JUST_BEFORE},
+        settings=settings,
+    )
+
+    assert after[0][0] == 0
+    assert before[0][0] == 1
