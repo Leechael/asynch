@@ -358,10 +358,12 @@ async def server_kill_during_query(dsn: str, args) -> str:
                 await task
             except BaseException:
                 pass
-        if killed:
-            await asyncio.to_thread(run_docker, "start", container_id)
-            await wait_for_clickhouse(container_id, args.server_restart_timeout)
-        await conn.close()
+        try:
+            if killed:
+                await asyncio.to_thread(run_docker, "start", container_id)
+                await wait_for_clickhouse(container_id, args.server_restart_timeout)
+        finally:
+            await conn.close()
 
     await conn.connect()
     try:

@@ -289,7 +289,11 @@ async def test_close_marks_connection_closed_when_wire_cleanup_fails():
 
 @pytest.mark.no_clickhouse
 @pytest.mark.asyncio
-async def test_server_kill_watch_cleans_and_reconnects_without_a_process_restart(monkeypatch):
+@pytest.mark.parametrize("restart_failure", [False, True])
+async def test_server_kill_watch_cleans_and_reconnects_without_a_process_restart(
+    monkeypatch,
+    restart_failure,
+):
     kill_event = asyncio.Event()
     loop = asyncio.get_running_loop()
 
@@ -361,6 +365,8 @@ async def test_server_kill_watch_cleans_and_reconnects_without_a_process_restart
     def fake_docker(*args, check=True):
         if args[0] == "kill":
             loop.call_soon_threadsafe(kill_event.set)
+        elif args[0] == "start" and restart_failure:
+            raise RuntimeError("restart failed")
         return SimpleNamespace(returncode=0)
 
     monkeypatch.setattr(chaos_memory_watch, "Connection", lambda dsn: connection)
@@ -373,14 +379,22 @@ async def test_server_kill_watch_cleans_and_reconnects_without_a_process_restart
         server_restart_timeout=1.0,
     )
 
-    outcome = await chaos_memory_watch.server_kill_during_query(
-        "clickhouse://test",
-        args,
-    )
-
-    assert outcome == "server_kill_recovered"
-    assert connection._connection.connect_count == 2
-    assert connection.close_count == 2
+    if restart_failure:
+        with pytest.raises(RuntimeError, match="restart failed"):
+            await chaos_memory_watch.server_kill_during_query(
+                "clickhouse://test",
+                args,
+            )
+        assert connection._connection.connect_count == 1
+        assert connection.close_count == 1
+    else:
+        outcome = await chaos_memory_watch.server_kill_during_query(
+            "clickhouse://test",
+            args,
+        )
+        assert outcome == "server_kill_recovered"
+        assert connection._connection.connect_count == 2
+        assert connection.close_count == 2
 
 
 @pytest.mark.asyncio
