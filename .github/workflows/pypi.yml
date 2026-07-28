@@ -1,22 +1,114 @@
 name: pypi
+
 on:
   release:
     types:
       - created
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  publish:
+  release-validation:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:25.3
+        env:
+          CLICKHOUSE_SKIP_USER_SETUP: "1"
+        ports:
+          - 9000:9000
+        options: >-
+          --health-cmd "clickhouse-client --query 'SELECT 1'"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      CLICKHOUSE_DSN: clickhouse://default:@127.0.0.1:9000/default
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
       - uses: actions/setup-python@v6
         with:
-          python-version: '3.10'
-      - name: Install pdm
+          python-version: "3.13"
+          cache: pip
+      - name: Install dependencies
         run: |
-          pip install -U pip pdm uv
+          python -m pip install --upgrade pip pdm uv
+          make deps
+      - name: Run test suite
+        run: PYTHONDEVMODE=1 PYTHONTRACEMALLOC=1 pdm run pytest
+      - name: Run normal memory watch
+        run: |
+          set -o pipefail
+          mkdir -p reports
+          pdm run python -m benchmark.memory_watch \
+            --cycles 300 \
+            --warmup-cycles 30 \
+            --json-output reports/memory-watch.json \
+            --fail-on-rss-growth-mib 128 \
+            --fail-on-python-heap-growth-mib 32 \
+            --fail-on-fd-growth 2 \
+            --fail-on-task-growth 0 \
+            | tee reports/memory-watch.txt
+      - name: Run connection-loss memory watch
+        env:
+          CLICKHOUSE_CONTAINER_ID: ${{ job.services.clickhouse.id }}
+        run: |
+          set -o pipefail
+          mkdir -p reports
+          pdm run python -m benchmark.chaos_memory_watch \
+            --operations 300 \
+            --warmup-operations 30 \
+            --report-every 25 \
+            --server-kill-cycles 10 \
+            --json-output reports/chaos-memory-watch.json \
+            --fail-on-unexpected-outcomes \
+            --fail-on-rss-growth-mib 128 \
+            --fail-on-python-heap-growth-mib 32 \
+            --fail-on-fd-growth 2 \
+            --fail-on-task-growth 0 \
+            | tee reports/chaos-memory-watch.txt
+      - name: Capture ClickHouse logs
+        if: ${{ always() }}
+        env:
+          CLICKHOUSE_CONTAINER_ID: ${{ job.services.clickhouse.id }}
+        run: |
+          mkdir -p reports
+          docker logs "$CLICKHOUSE_CONTAINER_ID" > reports/clickhouse.log 2>&1 || true
+      - name: Upload validation reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-validation-reports-${{ github.run_id }}
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 30
       - name: Build dists
         run: make build
-      - name: Pypi Publish
+      - name: Upload validated dists
+        uses: actions/upload-artifact@v4
+        with:
+          name: validated-dists-${{ github.run_id }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    if: ${{ github.event_name == 'release' }}
+    needs: release-validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download validated dists
+        uses: actions/download-artifact@v4
+        with:
+          name: validated-dists-${{ github.run_id }}
+          path: dist/
+      - name: PyPI publish
         uses: pypa/gh-action-pypi-publish@master
         with:
           user: __token__

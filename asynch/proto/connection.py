@@ -1035,9 +1035,9 @@ class Connection:
                 await self.writer.close()
             except ConnectionError as e:
                 logger.debug("Socket closed", exc_info=e)
-
-            self.reset_state()
-            self.connected = False
+            finally:
+                self.reset_state()
+                self.connected = False
 
     async def connect(self):
         if self.connected:

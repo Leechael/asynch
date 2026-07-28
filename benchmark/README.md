@@ -26,10 +26,14 @@ python -m benchmark.memory_watch \
 
 The script prints growth after warmup. A small plateau is normal; repeated
 positive RSS or Python heap growth across longer runs is the signal to inspect
-for leaks. For an explicit local threshold, add for example:
+for leaks. For explicit local thresholds and a machine-readable report, add for example:
 
 ```bash
---fail-on-rss-growth-mib 128
+--json-output reports/memory-watch.json \
+--fail-on-rss-growth-mib 128 \
+--fail-on-python-heap-growth-mib 32 \
+--fail-on-fd-growth 2 \
+--fail-on-task-growth 0
 ```
 
 ## Chaos Memory Watch
@@ -54,4 +58,28 @@ python -m benchmark.chaos_memory_watch \
 ```
 
 The default seed is fixed for reproducibility. Change `--seed` to explore a
-different operation order.
+different operation order. Pass `--fail-on-unexpected-outcomes` to turn any
+outcome outside the script's explicit expected set into a failure.
+
+## Release validation
+
+The `pypi` GitHub Actions workflow runs both memory watchers before publishing.
+It can also be started with `workflow_dispatch`; a manual run validates and
+builds the distributions but never publishes them.
+
+The release-only chaos run adds deterministic ClickHouse process-loss cycles.
+It starts a long query, sends `SIGKILL` to the Actions service container, checks
+that the driver cleared its wire and query state, restarts ClickHouse, and
+verifies that the same Python process can reconnect. Run the same phase locally
+against a disposable container with:
+
+```bash
+CLICKHOUSE_CONTAINER_ID=asynch-clickhouse \
+CLICKHOUSE_DSN='clickhouse://default:@127.0.0.1:9000/default' \
+python -m benchmark.chaos_memory_watch \
+  --operations 300 \
+  --server-kill-cycles 10 \
+  --fail-on-unexpected-outcomes
+```
+
+Do not point `CLICKHOUSE_CONTAINER_ID` at a shared or production container.

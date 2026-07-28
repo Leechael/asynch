@@ -3,11 +3,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import gc
+import json
 import os
 import subprocess
 import sys
 import tracemalloc
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from time import perf_counter
 
 from asynch.connection import Connection
@@ -28,6 +29,8 @@ class Sample:
     rss_mib: float
     py_current_mib: float
     py_peak_mib: float
+    fd_count: int
+    pending_tasks: int
     elapsed_s: float
 
 
@@ -39,6 +42,24 @@ def current_rss_mib() -> float:
     return int(output.strip()) / 1024
 
 
+def current_fd_count() -> int:
+    try:
+        return len(os.listdir("/proc/self/fd"))
+    except OSError:
+        return -1
+
+
+def pending_task_count() -> int:
+    current = asyncio.current_task()
+    return sum(1 for task in asyncio.all_tasks() if task is not current and not task.done())
+
+
+def write_json_report(path: str, report: dict) -> None:
+    with open(path, "w", encoding="utf-8") as report_file:
+        json.dump(report, report_file, indent=2)
+        report_file.write("\n")
+
+
 def sample(cycle: int, started_at: float) -> Sample:
     gc.collect()
     current, peak = tracemalloc.get_traced_memory()
@@ -47,6 +68,8 @@ def sample(cycle: int, started_at: float) -> Sample:
         rss_mib=current_rss_mib(),
         py_current_mib=current / 1024 / 1024,
         py_peak_mib=peak / 1024 / 1024,
+        fd_count=current_fd_count(),
+        pending_tasks=pending_task_count(),
         elapsed_s=perf_counter() - started_at,
     )
 
@@ -110,7 +133,8 @@ def print_sample(row: Sample, baseline: Sample | None):
         f"rss_delta={rss_delta:>8.2f} MiB "
         f"py_current={row.py_current_mib:>8.2f} MiB "
         f"py_delta={py_delta:>8.2f} MiB "
-        f"py_peak={row.py_peak_mib:>8.2f} MiB",
+        f"py_peak={row.py_peak_mib:>8.2f} MiB "
+        f"fds={row.fd_count:>4} tasks={row.pending_tasks:>3}",
         flush=True,
     )
 
@@ -151,26 +175,61 @@ async def run(args):
     final = samples[-1]
     rss_growth = final.rss_mib - baseline.rss_mib
     py_growth = final.py_current_mib - baseline.py_current_mib
+    fd_growth = final.fd_count - baseline.fd_count if baseline.fd_count >= 0 else 0
+    task_growth = final.pending_tasks - baseline.pending_tasks
     print()
     print(f"baseline_cycle={baseline.cycle}")
     print(f"final_cycle={final.cycle}")
     print(f"rss_growth_after_warmup={rss_growth:.2f} MiB")
     print(f"python_heap_growth_after_warmup={py_growth:.2f} MiB")
+    print(f"fd_growth_after_warmup={fd_growth}")
+    print(f"pending_task_growth_after_warmup={task_growth}")
     print(
         "Interpretation: a small plateau is normal; repeated positive growth "
         "across longer runs is the signal to investigate."
     )
 
+    report = {
+        "baseline_cycle": baseline.cycle,
+        "final_cycle": final.cycle,
+        "rss_growth_mib": rss_growth,
+        "python_heap_growth_mib": py_growth,
+        "fd_growth": fd_growth,
+        "pending_task_growth": task_growth,
+        "samples": [asdict(row) for row in samples],
+    }
+    if args.json_output:
+        write_json_report(args.json_output, report)
+
+    failures = []
     if args.fail_on_rss_growth_mib is not None and rss_growth > args.fail_on_rss_growth_mib:
-        raise SystemExit(
-            "RSS growth exceeded threshold: "
-            f"{rss_growth:.2f} MiB > {args.fail_on_rss_growth_mib:.2f} MiB"
+        failures.append(
+            f"RSS growth exceeded threshold: {rss_growth:.2f} MiB > "
+            f"{args.fail_on_rss_growth_mib:.2f} MiB"
         )
+    if (
+        args.fail_on_python_heap_growth_mib is not None
+        and py_growth > args.fail_on_python_heap_growth_mib
+    ):
+        failures.append(
+            f"Python heap growth exceeded threshold: {py_growth:.2f} MiB > "
+            f"{args.fail_on_python_heap_growth_mib:.2f} MiB"
+        )
+    if args.fail_on_fd_growth is not None and fd_growth > args.fail_on_fd_growth:
+        failures.append(
+            f"file descriptor growth exceeded threshold: {fd_growth} > {args.fail_on_fd_growth}"
+        )
+    if args.fail_on_task_growth is not None and task_growth > args.fail_on_task_growth:
+        failures.append(
+            f"pending task growth exceeded threshold: {task_growth} > {args.fail_on_task_growth}"
+        )
+    if failures:
+        raise SystemExit("\n".join(failures))
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Manual asynch memory-growth smoke test. Not intended for regular CI."
+        description="Asynch memory-growth smoke test for manual and release validation."
     )
     parser.add_argument("--dsn", default=os.environ.get("CLICKHOUSE_DSN", DEFAULT_DSN))
     parser.add_argument("--table", default="test.asynch_memory_watch")
@@ -181,7 +240,11 @@ def parse_args():
     parser.add_argument("--stream-rows", type=int, default=10000)
     parser.add_argument("--sleep", type=float, default=0.0)
     parser.add_argument("--keep-table", action="store_true")
+    parser.add_argument("--json-output")
     parser.add_argument("--fail-on-rss-growth-mib", type=float)
+    parser.add_argument("--fail-on-python-heap-growth-mib", type=float)
+    parser.add_argument("--fail-on-fd-growth", type=int)
+    parser.add_argument("--fail-on-task-growth", type=int)
     return parser.parse_args()
 
 

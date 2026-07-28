@@ -1,5 +1,6 @@
 import asyncio
 import ssl
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -7,6 +8,7 @@ import pytest
 from asynch.connection import Connection
 from asynch.errors import NetworkError, PartiallyConsumedQueryError
 from asynch.proto.models.enums import ConnectionStatus
+from benchmark import chaos_memory_watch
 
 HOST = "192.168.15.103"
 PORT = 10000
@@ -225,6 +227,160 @@ def test_terminate_aborts_connected_transport_inv_s8():
     transport.abort.assert_called_once()
     assert conn.connected is False
     assert conn.closed is True
+
+
+@pytest.mark.no_clickhouse
+@pytest.mark.asyncio
+async def test_disconnect_swallows_broken_pipe_and_resets_wire_state():
+    conn = Connection()
+    proto = conn._connection
+    proto.connected = True
+    proto.is_query_executing = True
+    proto.writer = Mock(close=AsyncMock(side_effect=BrokenPipeError("peer closed")))
+
+    await proto.disconnect()
+
+    assert proto.connected is False
+    assert proto.is_query_executing is False
+    assert proto.writer is None
+
+
+@pytest.mark.no_clickhouse
+@pytest.mark.asyncio
+async def test_disconnect_resets_wire_state_when_writer_close_fails():
+    conn = Connection()
+    proto = conn._connection
+    proto.connected = True
+    proto.is_query_executing = True
+    proto.writer = Mock(close=AsyncMock(side_effect=OSError("close failed")))
+    proto.reader = Mock()
+    proto.block_reader = Mock()
+    proto.block_reader_raw = Mock()
+    proto.block_writer = Mock()
+    proto.server_info = Mock()
+
+    with pytest.raises(OSError, match="close failed"):
+        await proto.disconnect()
+
+    assert proto.connected is False
+    assert proto.is_query_executing is False
+    assert proto.reader is None
+    assert proto.writer is None
+    assert proto.block_reader is None
+    assert proto.block_reader_raw is None
+    assert proto.block_writer is None
+    assert proto.server_info is None
+
+
+@pytest.mark.no_clickhouse
+@pytest.mark.asyncio
+async def test_close_marks_connection_closed_when_wire_cleanup_fails():
+    conn = Connection()
+    conn._opened = True
+    conn._connection.connected = True
+    conn._connection.disconnect = AsyncMock(side_effect=OSError("close failed"))
+
+    with pytest.raises(OSError, match="close failed"):
+        await conn.close()
+
+    assert conn.opened is False
+    assert conn.closed is True
+
+
+@pytest.mark.no_clickhouse
+@pytest.mark.asyncio
+async def test_server_kill_watch_cleans_and_reconnects_without_a_process_restart(monkeypatch):
+    kill_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+
+    class Resource:
+        pass
+
+    class ReaderResource(Resource):
+        def __init__(self):
+            self.reader = Resource()
+
+    class WriterResource(Resource):
+        def __init__(self):
+            self.writer = Resource()
+
+    class FakeProto:
+        def __init__(self):
+            self.connect_count = 0
+            self.connected = False
+            self.is_query_executing = False
+            self.last_query = None
+            self._open_wire()
+
+        def _open_wire(self):
+            self.reader = ReaderResource()
+            self.writer = WriterResource()
+            self.block_reader = Resource()
+            self.block_reader_raw = Resource()
+            self.block_writer = Resource()
+            self.server_info = Resource()
+
+        async def execute(self, query, args=None):
+            if query == "SELECT 1":
+                return [(1,)]
+            self.is_query_executing = True
+            await kill_event.wait()
+            self.connected = False
+            self.is_query_executing = False
+            self.reader = None
+            self.writer = None
+            self.block_reader = None
+            self.block_reader_raw = None
+            self.block_writer = None
+            self.server_info = None
+            self.last_query = None
+            raise ConnectionResetError("server exited")
+
+    class FakeConnection:
+        def __init__(self, dsn):
+            self.dsn = dsn
+            self._connection = FakeProto()
+            self.close_count = 0
+
+        @property
+        def is_query_executing(self):
+            return self._connection.is_query_executing
+
+        async def connect(self):
+            self._connection.connect_count += 1
+            if not self._connection.connected:
+                self._connection._open_wire()
+                self._connection.connected = True
+
+        async def close(self):
+            self.close_count += 1
+            self._connection.connected = False
+
+    connection = FakeConnection("clickhouse://test")
+
+    def fake_docker(*args, check=True):
+        if args[0] == "kill":
+            loop.call_soon_threadsafe(kill_event.set)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(chaos_memory_watch, "Connection", lambda dsn: connection)
+    monkeypatch.setattr(chaos_memory_watch, "run_docker", fake_docker)
+    monkeypatch.setattr(chaos_memory_watch, "wait_for_clickhouse", AsyncMock())
+    args = SimpleNamespace(
+        clickhouse_container_id="container-id",
+        query_start_timeout=1.0,
+        query_failure_timeout=1.0,
+        server_restart_timeout=1.0,
+    )
+
+    outcome = await chaos_memory_watch.server_kill_during_query(
+        "clickhouse://test",
+        args,
+    )
+
+    assert outcome == "server_kill_recovered"
+    assert connection._connection.connect_count == 2
+    assert connection.close_count == 2
 
 
 @pytest.mark.asyncio
