@@ -66,8 +66,16 @@ outcome outside the script's explicit expected set into a failure.
 
 The `pypi` GitHub Actions workflow runs both memory watchers before publishing
 and posts their Markdown summaries on the pull request associated with the
-release commit. It can also be started with `workflow_dispatch`; a manual run
-validates and builds the distributions but never publishes them.
+release commit. A repository owner, member, or collaborator can run the same
+validation on an open same-repository pull request by posting this exact comment:
+
+```text
+!prelaunch
+```
+
+The command validates and builds the distributions but never publishes them.
+The workflow can also be started with `workflow_dispatch`, which has the same
+non-publishing behavior.
 
 The release-only chaos run adds deterministic ClickHouse process-loss cycles.
 It starts a long query, sends `SIGKILL` to the Actions service container, checks

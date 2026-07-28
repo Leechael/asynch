@@ -5,9 +5,12 @@ on:
     types:
       - created
   workflow_dispatch:
+  issue_comment:
+    types:
+      - created
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.issue.number || github.ref }}
   cancel-in-progress: false
 
 permissions:
@@ -17,6 +20,12 @@ permissions:
 
 jobs:
   release-validation:
+    if: >-
+      github.event_name != 'issue_comment' ||
+      (github.event.issue.pull_request &&
+      github.event.comment.body == '!prelaunch' &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'),
+      github.event.comment.author_association))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     services:
@@ -34,9 +43,22 @@ jobs:
     env:
       CLICKHOUSE_DSN: clickhouse://default:@127.0.0.1:9000/default
     steps:
+      - name: Validate prelaunch target
+        if: ${{ github.event_name == 'issue_comment' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          head_repository=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/pulls/${{ github.event.issue.number }}" \
+            --jq '.head.repo.full_name')
+          test "$head_repository" = "$GITHUB_REPOSITORY"
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
+          persist-credentials: false
+          ref: >-
+            ${{ github.event_name == 'release' && github.event.release.tag_name ||
+            github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) ||
+            github.ref }}
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
@@ -130,8 +152,12 @@ jobs:
             fi
           } > "$report"
 
-          pr_number=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" \
-            --jq 'map(select(.base.ref == "main")) | .[0].number // empty')
+          if [ "$GITHUB_EVENT_NAME" = issue_comment ]; then
+            pr_number='${{ github.event.issue.number }}'
+          else
+            pr_number=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" \
+              --jq 'map(select(.base.ref == "main")) | .[0].number // empty')
+          fi
           if [ -z "$pr_number" ]; then
             echo "::warning::No pull request is associated with ${GITHUB_SHA}"
             exit 0
