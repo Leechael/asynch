@@ -14,9 +14,9 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
+  actions: read
   contents: read
-  issues: write
-  pull-requests: write
+  pull-requests: read
 
 jobs:
   release-validation:
@@ -28,6 +28,10 @@ jobs:
       github.event.comment.author_association))
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    outputs:
+      test_suite_outcome: ${{ steps.test_suite.outcome }}
+      memory_watch_outcome: ${{ steps.memory_watch.outcome }}
+      chaos_memory_watch_outcome: ${{ steps.chaos_memory_watch.outcome }}
     services:
       clickhouse:
         image: clickhouse/clickhouse-server:25.3
@@ -112,13 +116,47 @@ jobs:
         run: |
           mkdir -p reports
           docker logs "$CLICKHOUSE_CONTAINER_ID" > reports/clickhouse.log 2>&1 || true
-      - name: Comment validation results on the associated pull request
+      - name: Upload validation reports
         if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-validation-reports-${{ github.run_id }}-${{ github.run_attempt }}
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Build dists
+        run: make build
+      - name: Upload validated dists
+        uses: actions/upload-artifact@v4
+        with:
+          name: validated-dists-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
+  comment-results:
+    if: ${{ always() && needs.release-validation.result != 'skipped' }}
+    needs: release-validation
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Download validation reports
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: release-validation-reports-${{ github.run_id }}-${{ github.run_attempt }}
+          path: reports/
+      - name: Comment validation results on the associated pull request
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
-          TEST_SUITE_OUTCOME: ${{ steps.test_suite.outcome }}
-          MEMORY_WATCH_OUTCOME: ${{ steps.memory_watch.outcome }}
-          CHAOS_MEMORY_WATCH_OUTCOME: ${{ steps.chaos_memory_watch.outcome }}
+          TEST_SUITE_OUTCOME: ${{ needs.release-validation.outputs.test_suite_outcome }}
+          MEMORY_WATCH_OUTCOME: ${{ needs.release-validation.outputs.memory_watch_outcome }}
+          CHAOS_MEMORY_WATCH_OUTCOME: ${{ needs.release-validation.outputs.chaos_memory_watch_outcome }}
         run: |
           marker='<!-- release-validation-results -->'
           report=reports/release-validation-comment.md
@@ -131,9 +169,9 @@ jobs:
             echo
             echo '| Check | Result |'
             echo '| --- | --- |'
-            echo "| Test suite | \`$TEST_SUITE_OUTCOME\` |"
-            echo "| Normal memory watch | \`$MEMORY_WATCH_OUTCOME\` |"
-            echo "| Connection-loss memory watch | \`$CHAOS_MEMORY_WATCH_OUTCOME\` |"
+            echo "| Test suite | \`${TEST_SUITE_OUTCOME:-not-run}\` |"
+            echo "| Normal memory watch | \`${MEMORY_WATCH_OUTCOME:-not-run}\` |"
+            echo "| Connection-loss memory watch | \`${CHAOS_MEMORY_WATCH_OUTCOME:-not-run}\` |"
             echo
             if [ -f reports/memory-watch.md ]; then
               cat reports/memory-watch.md
@@ -175,23 +213,6 @@ jobs:
             gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${pr_number}/comments" \
               --input "$payload"
           fi
-      - name: Upload validation reports
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-validation-reports-${{ github.run_id }}-${{ github.run_attempt }}
-          path: reports/
-          if-no-files-found: warn
-          retention-days: 30
-      - name: Build dists
-        run: make build
-      - name: Upload validated dists
-        uses: actions/upload-artifact@v4
-        with:
-          name: validated-dists-${{ github.run_id }}-${{ github.run_attempt }}
-          path: dist/
-          if-no-files-found: error
-          retention-days: 30
 
   publish:
     if: ${{ github.event_name == 'release' }}

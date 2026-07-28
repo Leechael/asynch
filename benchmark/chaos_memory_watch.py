@@ -16,6 +16,7 @@ from time import perf_counter
 
 from asynch.connection import Connection
 from asynch.proto import constants
+from benchmark import write_memory_markdown_report
 
 DEFAULT_DSN = (
     f"clickhouse://{os.environ.get('CLICKHOUSE_USER', constants.DEFAULT_USER)}:"
@@ -64,53 +65,25 @@ def write_json_report(path: str, report: dict) -> None:
 
 
 def write_markdown_report(path: str, report: dict) -> None:
-    baseline = report["baseline"]
-    final = report["final"]
-    rows = (
-        ("RSS", baseline["rss_mib"], final["rss_mib"], report["rss_growth_mib"], "MiB"),
-        (
-            "Python heap",
-            baseline["py_current_mib"],
-            final["py_current_mib"],
-            report["python_heap_growth_mib"],
-            "MiB",
-        ),
-        ("File descriptors", baseline["fd_count"], final["fd_count"], report["fd_growth"], ""),
-        (
-            "Pending tasks",
-            baseline["pending_tasks"],
-            final["pending_tasks"],
-            report["pending_task_growth"],
-            "",
-        ),
-    )
-    lines = [
-        "### Connection-loss memory watch",
+    outcomes = [
         "",
-        f"Operations: {report['baseline_operation']} baseline, {report['final_operation']} final",
+        "#### Outcomes",
         "",
-        "| Metric | Baseline | Final | Growth |",
-        "| --- | ---: | ---: | ---: |",
+        "| Outcome | Count |",
+        "| --- | ---: |",
     ]
-    for name, baseline_value, final_value, growth, unit in rows:
-        suffix = f" {unit}" if unit else ""
-        lines.append(
-            f"| {name} | {baseline_value:.2f}{suffix} | {final_value:.2f}{suffix} | "
-            f"{growth:+.2f}{suffix} |"
-        )
-    lines.extend(
-        [
-            "",
-            "#### Outcomes",
-            "",
-            "| Outcome | Count |",
-            "| --- | ---: |",
-        ]
-    )
     for name, count in sorted(report["outcomes"].items(), key=lambda item: (-item[1], item[0])):
-        lines.append(f"| `{name}` | {count} |")
-    with open(path, "w", encoding="utf-8") as report_file:
-        report_file.write("\n".join(lines) + "\n")
+        outcomes.append(f"| `{name}` | {count} |")
+    write_memory_markdown_report(
+        path,
+        report,
+        heading="Connection-loss memory watch",
+        progress=(
+            f"Operations: {report['baseline_operation']} baseline, "
+            f"{report['final_operation']} final"
+        ),
+        extra_lines=outcomes,
+    )
 
 
 def sample(operation: int, started_at: float) -> Sample:
