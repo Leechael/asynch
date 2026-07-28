@@ -1,22 +1,230 @@
 name: pypi
+
 on:
   release:
     types:
       - created
+  workflow_dispatch:
+  issue_comment:
+    types:
+      - created
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.issue.number || github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
 jobs:
-  publish:
+  release-validation:
+    if: >-
+      github.event_name != 'issue_comment' ||
+      (github.event.issue.pull_request &&
+      github.event.comment.body == '!prelaunch' &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'),
+      github.event.comment.author_association))
     runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      test_suite_outcome: ${{ steps.test_suite.outcome }}
+      memory_watch_outcome: ${{ steps.memory_watch.outcome }}
+      chaos_memory_watch_outcome: ${{ steps.chaos_memory_watch.outcome }}
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:25.3
+        env:
+          CLICKHOUSE_SKIP_USER_SETUP: "1"
+        ports:
+          - 9000:9000
+        options: >-
+          --health-cmd "clickhouse-client --query 'SELECT 1'"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      CLICKHOUSE_DSN: clickhouse://default:@127.0.0.1:9000/default
     steps:
+      - name: Validate prelaunch target
+        if: ${{ github.event_name == 'issue_comment' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          head_repository=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/pulls/${{ github.event.issue.number }}" \
+            --jq '.head.repo.full_name')
+          test "$head_repository" = "$GITHUB_REPOSITORY"
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          ref: >-
+            ${{ github.event_name == 'release' && github.event.release.tag_name ||
+            github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) ||
+            github.ref }}
       - uses: actions/setup-python@v6
         with:
-          python-version: '3.10'
-      - name: Install pdm
+          python-version: "3.13"
+          cache: pip
+      - name: Install dependencies
         run: |
-          pip install -U pip pdm uv
+          python -m pip install --upgrade pip pdm uv
+          make deps
+      - name: Run test suite
+        id: test_suite
+        run: PYTHONDEVMODE=1 PYTHONTRACEMALLOC=1 pdm run pytest
+      - name: Run normal memory watch
+        id: memory_watch
+        run: |
+          set -o pipefail
+          mkdir -p reports
+          pdm run python -m benchmark.memory_watch \
+            --cycles 300 \
+            --warmup-cycles 30 \
+            --json-output reports/memory-watch.json \
+            --markdown-output reports/memory-watch.md \
+            --fail-on-rss-growth-mib 128 \
+            --fail-on-python-heap-growth-mib 32 \
+            --fail-on-fd-growth 2 \
+            --fail-on-task-growth 0 \
+            | tee reports/memory-watch.txt
+      - name: Run connection-loss memory watch
+        id: chaos_memory_watch
+        env:
+          CLICKHOUSE_CONTAINER_ID: ${{ job.services.clickhouse.id }}
+        run: |
+          set -o pipefail
+          mkdir -p reports
+          pdm run python -m benchmark.chaos_memory_watch \
+            --operations 300 \
+            --warmup-operations 30 \
+            --report-every 25 \
+            --server-kill-cycles 10 \
+            --json-output reports/chaos-memory-watch.json \
+            --markdown-output reports/chaos-memory-watch.md \
+            --fail-on-unexpected-outcomes \
+            --fail-on-rss-growth-mib 128 \
+            --fail-on-python-heap-growth-mib 32 \
+            --fail-on-fd-growth 2 \
+            --fail-on-task-growth 0 \
+            | tee reports/chaos-memory-watch.txt
+      - name: Capture ClickHouse logs
+        if: ${{ always() }}
+        env:
+          CLICKHOUSE_CONTAINER_ID: ${{ job.services.clickhouse.id }}
+        run: |
+          mkdir -p reports
+          docker logs "$CLICKHOUSE_CONTAINER_ID" > reports/clickhouse.log 2>&1 || true
+      - name: Upload validation reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-validation-reports-${{ github.run_id }}-${{ github.run_attempt }}
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 30
       - name: Build dists
         run: make build
-      - name: Pypi Publish
+      - name: Upload validated dists
+        uses: actions/upload-artifact@v4
+        with:
+          name: validated-dists-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
+  comment-results:
+    if: ${{ always() && needs.release-validation.result != 'skipped' }}
+    needs: release-validation
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Download validation reports
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: release-validation-reports-${{ github.run_id }}-${{ github.run_attempt }}
+          path: reports/
+      - name: Comment validation results on the associated pull request
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TEST_SUITE_OUTCOME: ${{ needs.release-validation.outputs.test_suite_outcome }}
+          MEMORY_WATCH_OUTCOME: ${{ needs.release-validation.outputs.memory_watch_outcome }}
+          CHAOS_MEMORY_WATCH_OUTCOME: ${{ needs.release-validation.outputs.chaos_memory_watch_outcome }}
+        run: |
+          marker='<!-- release-validation-results -->'
+          report=reports/release-validation-comment.md
+          mkdir -p reports
+          {
+            echo "$marker"
+            echo '## Release validation results'
+            echo
+            echo "Run: [${GITHUB_RUN_ID} attempt ${GITHUB_RUN_ATTEMPT}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})"
+            echo
+            echo '| Check | Result |'
+            echo '| --- | --- |'
+            echo "| Test suite | \`${TEST_SUITE_OUTCOME:-not-run}\` |"
+            echo "| Normal memory watch | \`${MEMORY_WATCH_OUTCOME:-not-run}\` |"
+            echo "| Connection-loss memory watch | \`${CHAOS_MEMORY_WATCH_OUTCOME:-not-run}\` |"
+            echo
+            if [ -f reports/memory-watch.md ]; then
+              cat reports/memory-watch.md
+            else
+              echo '### Normal workload memory watch'
+              echo
+              echo 'No report was produced.'
+            fi
+            echo
+            if [ -f reports/chaos-memory-watch.md ]; then
+              cat reports/chaos-memory-watch.md
+            else
+              echo '### Connection-loss memory watch'
+              echo
+              echo 'No report was produced.'
+            fi
+          } > "$report"
+
+          if [ "$GITHUB_EVENT_NAME" = issue_comment ]; then
+            pr_number='${{ github.event.issue.number }}'
+          else
+            pr_number=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" \
+              --jq 'map(select(.base.ref == "main")) | .[0].number // empty')
+          fi
+          if [ -z "$pr_number" ]; then
+            echo "::warning::No pull request is associated with ${GITHUB_SHA}"
+            exit 0
+          fi
+
+          comment_id=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${pr_number}/comments" \
+            --jq '.[] | select(.body | contains("<!-- release-validation-results -->")) | .id' \
+            | tail -n 1)
+          payload=$(mktemp)
+          jq -n --rawfile body "$report" '{body: $body}' > "$payload"
+          if [ -n "$comment_id" ]; then
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" \
+              --input "$payload"
+          else
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${pr_number}/comments" \
+              --input "$payload"
+          fi
+
+  publish:
+    if: ${{ github.event_name == 'release' }}
+    needs: release-validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download validated dists
+        uses: actions/download-artifact@v4
+        with:
+          name: validated-dists-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist/
+      - name: PyPI publish
         uses: pypa/gh-action-pypi-publish@master
         with:
           user: __token__
