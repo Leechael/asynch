@@ -8,7 +8,7 @@ import pytest
 from asynch.connection import Connection
 from asynch.errors import NetworkError, PartiallyConsumedQueryError
 from asynch.proto.models.enums import ConnectionStatus
-from benchmark import chaos_memory_watch
+from benchmark import chaos_memory_watch, memory_watch
 
 HOST = "192.168.15.103"
 PORT = 10000
@@ -395,6 +395,49 @@ async def test_server_kill_watch_cleans_and_reconnects_without_a_process_restart
         assert outcome == "server_kill_recovered"
         assert connection._connection.connect_count == 2
         assert connection.close_count == 2
+
+
+@pytest.mark.no_clickhouse
+def test_memory_watch_markdown_reports_include_release_metrics(tmp_path):
+    baseline = {
+        "rss_mib": 100.0,
+        "py_current_mib": 10.0,
+        "fd_count": 5,
+        "pending_tasks": 0,
+    }
+    final = {
+        "rss_mib": 101.0,
+        "py_current_mib": 10.5,
+        "fd_count": 5,
+        "pending_tasks": 0,
+    }
+    common = {
+        "rss_growth_mib": 1.0,
+        "python_heap_growth_mib": 0.5,
+        "fd_growth": 0,
+        "pending_task_growth": 0,
+        "baseline": baseline,
+        "final": final,
+    }
+    normal_path = tmp_path / "normal.md"
+    chaos_path = tmp_path / "chaos.md"
+
+    memory_watch.write_markdown_report(
+        str(normal_path),
+        {**common, "baseline_cycle": 5, "final_cycle": 50},
+    )
+    chaos_memory_watch.write_markdown_report(
+        str(chaos_path),
+        {
+            **common,
+            "baseline_operation": 30,
+            "final_operation": 310,
+            "outcomes": {"server_kill_recovered": 10},
+        },
+    )
+
+    assert "| RSS | 100.00 MiB | 101.00 MiB | +1.00 MiB |" in normal_path.read_text()
+    assert "| `server_kill_recovered` | 10 |" in chaos_path.read_text()
 
 
 @pytest.mark.asyncio

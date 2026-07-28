@@ -30,6 +30,7 @@ for leaks. For explicit local thresholds and a machine-readable report, add for 
 
 ```bash
 --json-output reports/memory-watch.json \
+--markdown-output reports/memory-watch.md \
 --fail-on-rss-growth-mib 128 \
 --fail-on-python-heap-growth-mib 32 \
 --fail-on-fd-growth 2 \
@@ -63,9 +64,10 @@ outcome outside the script's explicit expected set into a failure.
 
 ## Release validation
 
-The `pypi` GitHub Actions workflow runs both memory watchers before publishing.
-It can also be started with `workflow_dispatch`; a manual run validates and
-builds the distributions but never publishes them.
+The `pypi` GitHub Actions workflow runs both memory watchers before publishing
+and posts their Markdown summaries on the pull request associated with the
+release commit. It can also be started with `workflow_dispatch`; a manual run
+validates and builds the distributions but never publishes them.
 
 The release-only chaos run adds deterministic ClickHouse process-loss cycles.
 It starts a long query, sends `SIGKILL` to the Actions service container, checks

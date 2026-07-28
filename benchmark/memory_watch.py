@@ -60,6 +60,45 @@ def write_json_report(path: str, report: dict) -> None:
         report_file.write("\n")
 
 
+def write_markdown_report(path: str, report: dict) -> None:
+    baseline = report["baseline"]
+    final = report["final"]
+    rows = (
+        ("RSS", baseline["rss_mib"], final["rss_mib"], report["rss_growth_mib"], "MiB"),
+        (
+            "Python heap",
+            baseline["py_current_mib"],
+            final["py_current_mib"],
+            report["python_heap_growth_mib"],
+            "MiB",
+        ),
+        ("File descriptors", baseline["fd_count"], final["fd_count"], report["fd_growth"], ""),
+        (
+            "Pending tasks",
+            baseline["pending_tasks"],
+            final["pending_tasks"],
+            report["pending_task_growth"],
+            "",
+        ),
+    )
+    lines = [
+        "### Normal workload memory watch",
+        "",
+        f"Cycles: {report['baseline_cycle']} baseline, {report['final_cycle']} final",
+        "",
+        "| Metric | Baseline | Final | Growth |",
+        "| --- | ---: | ---: | ---: |",
+    ]
+    for name, baseline_value, final_value, growth, unit in rows:
+        suffix = f" {unit}" if unit else ""
+        lines.append(
+            f"| {name} | {baseline_value:.2f}{suffix} | {final_value:.2f}{suffix} | "
+            f"{growth:+.2f}{suffix} |"
+        )
+    with open(path, "w", encoding="utf-8") as report_file:
+        report_file.write("\n".join(lines) + "\n")
+
+
 def sample(cycle: int, started_at: float) -> Sample:
     gc.collect()
     current, peak = tracemalloc.get_traced_memory()
@@ -196,10 +235,14 @@ async def run(args):
         "python_heap_growth_mib": py_growth,
         "fd_growth": fd_growth,
         "pending_task_growth": task_growth,
+        "baseline": asdict(baseline),
+        "final": asdict(final),
         "samples": [asdict(row) for row in samples],
     }
     if args.json_output:
         write_json_report(args.json_output, report)
+    if args.markdown_output:
+        write_markdown_report(args.markdown_output, report)
 
     failures = []
     if args.fail_on_rss_growth_mib is not None and rss_growth > args.fail_on_rss_growth_mib:
@@ -241,6 +284,7 @@ def parse_args():
     parser.add_argument("--sleep", type=float, default=0.0)
     parser.add_argument("--keep-table", action="store_true")
     parser.add_argument("--json-output")
+    parser.add_argument("--markdown-output")
     parser.add_argument("--fail-on-rss-growth-mib", type=float)
     parser.add_argument("--fail-on-python-heap-growth-mib", type=float)
     parser.add_argument("--fail-on-fd-growth", type=int)
