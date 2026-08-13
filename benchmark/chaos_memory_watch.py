@@ -205,7 +205,8 @@ async def abandon_stream(dsn: str, args) -> str:
     await conn.connect()
     try:
         result = await conn._connection.execute_iter(
-            f"SELECT number, sleepEachRow({args.sleep_each_row}) FROM numbers({args.chaos_rows})"
+            f"SELECT number, sleepEachRow({args.sleep_each_row}) FROM numbers({args.chaos_rows}) "
+            "SETTINGS max_block_size = 8192"
         )
         consumed = 0
         try:
@@ -227,7 +228,8 @@ async def cancel_query_task(dsn: str, args) -> str:
     await conn.connect()
     task = asyncio.create_task(
         conn._connection.execute(
-            f"SELECT number, sleepEachRow({args.sleep_each_row}) FROM numbers({args.chaos_rows})"
+            f"SELECT number, sleepEachRow({args.sleep_each_row}) FROM numbers({args.chaos_rows}) "
+            "SETTINGS max_block_size = 8192"
         )
     )
     try:
@@ -258,7 +260,8 @@ async def disconnect_during_query(dsn: str, args) -> str:
     await conn.connect()
     task = asyncio.create_task(
         conn._connection.execute(
-            f"SELECT number, sleepEachRow({args.sleep_each_row}) FROM numbers({args.chaos_rows})"
+            f"SELECT number, sleepEachRow({args.sleep_each_row}) FROM numbers({args.chaos_rows}) "
+            "SETTINGS max_block_size = 8192"
         )
     )
     try:
@@ -336,7 +339,11 @@ async def server_kill_during_query(dsn: str, args) -> str:
                 proto.writer.writer,
             )
         ]
-        task = asyncio.create_task(proto.execute("SELECT sleep(30)"))
+        task = asyncio.create_task(
+            proto.execute(
+                "SELECT sleep(30) SETTINGS function_sleep_max_microseconds_per_block = 40000000"
+            )
+        )
         await wait_for_query_start(conn, args.query_start_timeout)
 
         killed = True
