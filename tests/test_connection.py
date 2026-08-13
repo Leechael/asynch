@@ -2,11 +2,13 @@ import asyncio
 import ssl
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
+from uuid import uuid4
 
 import pytest
 
 from asynch.connection import Connection
-from asynch.errors import NetworkError, PartiallyConsumedQueryError
+from asynch.errors import NetworkError, PartiallyConsumedQueryError, ServerException
+from asynch.proto import constants
 from asynch.proto.models.enums import ConnectionStatus
 from benchmark import chaos_memory_watch, memory_watch
 
@@ -589,3 +591,41 @@ async def test_connection_close(config):
 
         assert not conn.opened
         assert conn.closed
+
+
+@pytest.mark.asyncio
+async def test_session_timezone_does_not_outlive_the_query_that_carried_it(conn: Connection):
+    """A datetime keeps meaning what the server says it means.
+
+    ClickHouse announces the ``session_timezone`` of a statement that feeds its
+    rows through ``input()``, and announces nothing on any other statement. A
+    connection that holds on to the announcement therefore reads every later
+    result in a timezone the server is no longer using, and a pooled connection
+    hands that on to whoever borrows it next.
+    """
+
+    proto = conn._connection
+    if proto.server_info.used_revision < constants.DBMS_MIN_PROTOCOL_VERSION_WITH_TIMEZONE_UPDATES:
+        pytest.skip("ClickHouse server does not announce a session timezone")
+
+    table = f"test.session_tz_{uuid4().hex[:8]}"
+    async with conn.cursor() as cursor:
+        await cursor.execute(f"CREATE TABLE {table} (a Int8) ENGINE = Memory")
+
+    try:
+        before = await proto.execute("SELECT toDateTime(0)")
+
+        try:
+            await proto.execute(
+                f"INSERT INTO {table} (a) SELECT a FROM input('a Int8') FORMAT Native",
+                args=[{"a": 1}],
+                settings={"session_timezone": "Asia/Kolkata"},
+            )
+        except ServerException:
+            pytest.skip("ClickHouse server does not support session_timezone")
+
+        assert await proto.execute("SELECT toDateTime(0)") == before
+        assert proto.server_info.session_timezone is None
+    finally:
+        async with conn.cursor() as cursor:
+            await cursor.execute(f"DROP TABLE IF EXISTS {table}")
