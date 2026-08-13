@@ -2,6 +2,31 @@
 
 ## 0.4
 
+### 0.4.0rc4
+
+- Mark a connection closed even when the wire cleanup fails. `Connection.close()`
+  now clears `_opened` and sets `_closed` in a `finally` block, so a
+  `disconnect()` that raises on an already broken socket no longer leaves the
+  object reporting itself as open. This is the path taken by a caller that
+  disposes its connections after a network error, such as a SQLAlchemy engine
+  whose dialect answers `is_disconnect()`: before, the raising cleanup left a
+  connection that still described itself as connected while nothing was on the
+  other end of it.
+- Reset the wire state even when the socket refuses to close. The protocol level
+  `Connection.disconnect()` now calls `reset_state()` and clears `connected` in a
+  `finally` block. A `writer.close()` that raised anything other than
+  `ConnectionError` used to leave the previous session buffered state and the
+  `connected` flag in place, and because `connect()` disconnects first whenever
+  it still believes it is connected, the same failing close ran again on every
+  reconnect attempt. A process that hit this once could not open another
+  connection until it was restarted.
+- Gate the release on those two paths. The publish workflow now runs the test
+  suite and both memory watches, including one that kills the server mid
+  workload, against a live ClickHouse server before it builds and uploads, so a
+  tag that regresses connection cleanup or leaks sockets, tasks, or memory
+  across reconnects does not reach PyPI. Commenting `!prelaunch` on a pull
+  request runs the same checks and reports the results there.
+
 ### 0.4.0rc3
 
 - Send an aware `datetime` parameter as the instant it denotes,
