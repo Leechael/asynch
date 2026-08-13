@@ -1255,6 +1255,12 @@ class Connection:
                 logger.info("Connection was closed, reconnecting.")
                 await self.connect()
 
+            # The server announces a session timezone for the statement it
+            # applies to and never withdraws it, so the announcement cannot be
+            # allowed to decide how the next statement's results are read.
+            if self.server_info is not None:
+                self.server_info.session_timezone = None
+
             self.is_query_executing = True
 
     async def process_ordinary_query(

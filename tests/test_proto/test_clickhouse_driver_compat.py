@@ -863,6 +863,26 @@ async def test_upstream_receive_timezone_update_packet():
 
 
 @pytest.mark.asyncio
+async def test_upstream_session_timezone_does_not_outlive_its_query():
+    """The announcement belongs to one statement, not to the connection.
+
+    A server announces the session timezone on the statement it applies to and
+    never withdraws it, so a value left on the connection would go on deciding
+    how every later result is read. Upstream clears it as each query starts
+    (``Client.disconnect_on_error``), and so does this driver.
+    """
+
+    conn = ProtoConnection()
+    conn.server_info = SimpleNamespace(session_timezone="Asia/Taipei")
+    conn.connected = True
+    conn.ping = AsyncMock(return_value=True)
+
+    await conn.force_connect()
+
+    assert conn.server_info.session_timezone is None
+
+
+@pytest.mark.asyncio
 async def test_upstream_part_uuids_packet_reads_uuid_vector():
     uuids = [
         UUID("c0fcbba9-0752-44ed-a5d6-4dfb4342b89d"),

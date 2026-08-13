@@ -2,6 +2,20 @@
 
 ## 0.4
 
+### Unreleased
+
+- Stop a session timezone announced by the server from outliving the query it
+  arrived with. ClickHouse announces `session_timezone` only on a statement
+  that feeds its rows through `input()`, and never announces its absence, so
+  the value the driver recorded on the connection went on deciding how every
+  later result was read. After one such insert carrying
+  `session_timezone='Asia/Kolkata'`, a plain `SELECT toDateTime(0)` over the
+  same connection came back as `1970-01-01 05:30` while the server still called
+  that row `1970-01-01 00:00`, and a pooled connection handed the shift to
+  whoever borrowed it next. The value is now cleared as each query starts,
+  which is what `clickhouse-driver` has always done and what this driver was
+  missing.
+
 ### 0.4.0rc4
 
 - Mark a connection closed even when the wire cleanup fails. `Connection.close()`
