@@ -28,6 +28,9 @@ pytestmark = pytest.mark.no_clickhouse
 async def test_force_connect_probes_before_starting_query():
     conn = ProtoConnection()
     conn.connected = True
+    # A live connection always records its creating loop; keep the synthetic
+    # state on the new invariant so force_connect probes instead of reconnecting.
+    conn._loop = asyncio.get_running_loop()
 
     async def ping():
         assert conn.is_query_executing is False
