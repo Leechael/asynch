@@ -875,6 +875,9 @@ async def test_upstream_session_timezone_does_not_outlive_its_query():
     conn = ProtoConnection()
     conn.server_info = SimpleNamespace(session_timezone="Asia/Taipei")
     conn.connected = True
+    # A live connection records the loop it connected on; without it
+    # force_connect would reconnect instead of reusing this synthetic session.
+    conn._loop = asyncio.get_running_loop()
     conn.ping = AsyncMock(return_value=True)
 
     await conn.force_connect()
