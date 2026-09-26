@@ -15,6 +15,34 @@ def _get_pool_size(pool: Pool) -> int:
     return pool.acquired_connections + pool.free_connections
 
 
+# `system.metrics.TCPConnection` counts every native connection on the server,
+# not only this test's. CI's service health check runs `clickhouse-client` every
+# few seconds, so one sample can include a connection that is not ours. Read the
+# baseline as the lowest of a few samples, and let the final count settle: a
+# connection the pool leaked stays open and still fails the comparison.
+_TCP_SAMPLE_INTERVAL = 0.2
+
+
+async def _baseline_tcp_connections(get_tcp_connections, conn: Connection) -> int:
+    counts = []
+    for _ in range(3):
+        counts.append(await get_tcp_connections(conn))
+        await asyncio.sleep(_TCP_SAMPLE_INTERVAL)
+    return min(counts)
+
+
+async def _settled_tcp_connections(
+    get_tcp_connections, conn: Connection, limit: int, *, timeout: float = 5.0
+) -> int:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while True:
+        count = await get_tcp_connections(conn)
+        if count <= limit or loop.time() >= deadline:
+            return count
+        await asyncio.sleep(_TCP_SAMPLE_INTERVAL)
+
+
 @pytest.mark.no_clickhouse
 @pytest.mark.asyncio
 async def test_release_discards_poisoned_connection_without_raising_inv_s7():
@@ -450,7 +478,7 @@ async def test_pool_connection_management(config, get_tcp_connections):
             pass
 
     async with Connection(dsn=config.dsn) as conn:
-        init_tcps = await get_tcp_connections(conn)
+        init_tcps = await _baseline_tcp_connections(get_tcp_connections, conn)
 
     async with Pool(minsize=1, maxsize=2, dsn=config.dsn) as pool:
         async with pool.connection():
@@ -505,7 +533,7 @@ async def test_pool_connection_management(config, get_tcp_connections):
         assert pool.acquired_connections == 0
 
     async with Connection(dsn=config.dsn) as conn:
-        assert await get_tcp_connections(conn) <= init_tcps
+        assert await _settled_tcp_connections(get_tcp_connections, conn, init_tcps) <= init_tcps
 
 
 @pytest.mark.asyncio
@@ -526,7 +554,7 @@ async def test_pool_concurrent_connection_management(config, get_tcp_connections
                 return selectee
 
     async with Connection(dsn=config.dsn) as conn:
-        init_tcps = await get_tcp_connections(conn)
+        init_tcps = await _baseline_tcp_connections(get_tcp_connections, conn)
 
     min_size, max_size = 10, 21
     selectees = list(range(min_size, max_size + 1))  # exceeding the maxsize
@@ -539,7 +567,7 @@ async def test_pool_concurrent_connection_management(config, get_tcp_connections
         answers = await asyncio.gather(*tasks)
 
     async with Connection(dsn=config.dsn) as conn:
-        noc = await get_tcp_connections(conn)
+        noc = await _settled_tcp_connections(get_tcp_connections, conn, init_tcps)
         assert noc <= init_tcps
 
     assert selectees == answers
