@@ -2,8 +2,26 @@
 
 ## 0.4
 
-### Unreleased
+### 0.4.0rc5
 
+- Reconnect transparently when a pooled connection moves to another event loop.
+  A connection binds its reader and writer to the loop where it connected. A
+  pool that outlives that loop, such as a SQLAlchemy engine used from Celery
+  tasks that each run under a fresh `async_to_sync` loop, could hand the
+  connection to a new loop: the liveness ping touched streams of a closed loop,
+  and the cleanup raised `RuntimeError: Event loop is closed`, failing the
+  query. `force_connect` now records the loop at connect time and reconnects
+  when the running loop differs or the recorded one is closed, `disconnect()`
+  tolerates a writer bound to a closed loop, and the per-connection lock is
+  recreated when it belongs to another loop. `disable_reconnect` still refuses
+  the reconnect with `NetworkError`.
+- Keep the DSN's settings when `settings` is also passed. Explicit keyword
+  arguments override the DSN, and since rc1 that replaced the whole `settings`
+  mapping, silently dropping every setting in the DSN query string.
+  clickhouse-sqlalchemy always passes `settings` (it injects `join_use_nulls`),
+  so a URL such as `clickhouse+asynch://.../db?async_insert=0` stopped reaching
+  the server. `settings` now merge key by key; an explicit setting still wins
+  over the same key in the DSN.
 - Stop a session timezone announced by the server from outliving the query it
   arrived with. ClickHouse announces `session_timezone` only on a statement
   that feeds its rows through `input()`, and never announces its absence, so
@@ -15,6 +33,13 @@
   whoever borrowed it next. The value is now cleared as each query starts,
   which is what `clickhouse-driver` has always done and what this driver was
   missing.
+- CI: the nightly TLS job waits for a completed TLS handshake instead of an open
+  TCP port, which docker-proxy accepts before the server listens.
+- CI: the pool connection-management tests let the server's TCP connection
+  count settle instead of failing when a sample lands on the service health
+  check's own connection.
+- Release: the release workflow no longer tries to publish to PyPI; releases
+  are GitHub releases only.
 
 ### 0.4.0rc4
 
