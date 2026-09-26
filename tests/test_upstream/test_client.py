@@ -126,6 +126,19 @@ def test_explicit_compression_overrides_dsn():
     assert connection._connection.compressor_cls is LZ4Compressor
 
 
+def test_explicit_settings_merge_with_dsn_settings():
+    connection = Connection(
+        dsn="clickhouse://host?async_insert=0&max_threads=2",
+        settings={"join_use_nulls": 1, "max_threads": 4},
+    )
+
+    assert connection._connection.settings == {
+        "async_insert": "0",
+        "max_threads": 4,
+        "join_use_nulls": 1,
+    }
+
+
 def test_client_name():
     c = Connection(dsn="clickhouse://host?client_name=native")
     assert c._connection.client_name == "ClickHouse native"
