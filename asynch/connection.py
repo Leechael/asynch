@@ -25,7 +25,13 @@ class Connection:
     ):
         if dsn:
             config = parse_dsn(dsn)
+            # Explicit arguments win over the DSN, but `settings` is a mapping:
+            # merge it key by key so an explicit `settings` argument does not
+            # silently discard the settings the DSN query string carries.
+            settings = {**config.get("settings", {}), **kwargs.get("settings", {})}
             config.update(kwargs)
+            if settings:
+                config["settings"] = settings
             self._connection = ProtoConnection(**config, stack_track=stack_track)
             user = config.get("user", None) or user
             password = config.get("password", None) or password
