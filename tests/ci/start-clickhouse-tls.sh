@@ -35,12 +35,20 @@ docker run --detach --name asynch-clickhouse-tls \
   --volume "$tls_dir/tls.xml:/etc/clickhouse-server/config.d/tls.xml:ro" \
   clickhouse/clickhouse-server:latest
 
+# Wait for a completed TLS handshake, not an open TCP port: docker-proxy
+# accepts on the published port before ClickHouse listens behind it, so a
+# plain connect succeeds at once and the test then races server startup.
+tls_ready() {
+  timeout 2 openssl s_client -connect 127.0.0.1:9440 -servername localhost \
+    </dev/null >/dev/null 2>&1
+}
+
 for _ in $(seq 1 60); do
-  if timeout 1 bash -c "</dev/tcp/127.0.0.1/9440" 2>/dev/null; then
+  if tls_ready; then
     break
   fi
   sleep 1
 done
 
-timeout 1 bash -c "</dev/tcp/127.0.0.1/9440"
+tls_ready
 echo "CLICKHOUSE_TLS_DSN=clickhouse://default:@localhost:9440/default?secure=true&verify=true&ca_certs=$tls_dir/server.crt&server_hostname=localhost" >>"$GITHUB_ENV"
