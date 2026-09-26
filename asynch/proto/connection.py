@@ -274,6 +274,9 @@ class Connection:
         self.tcp_keepalive = tcp_keepalive
         self.disable_reconnect = disable_reconnect
         self._lock = asyncio.Lock()
+        # Event loop this connection's streams belong to. Set on connect,
+        # cleared on reset; force_connect uses it to detect cross-loop reuse.
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
         self.secure_socket = secure
         self.verify = verify
         self.check_hostname = check_hostname if verify else False
@@ -986,6 +989,7 @@ class Connection:
 
     async def _init_connection(self, host: str, port: int):
         self.host, self.port = host, port
+        self._loop = asyncio.get_running_loop()
         ssl_context = self._get_ssl_context()
         server_hostname = self.server_hostname or host if ssl_context else None
         reader, writer = await asyncio.open_connection(
@@ -1022,6 +1026,7 @@ class Connection:
         self.block_reader_raw = None
         self.block_writer = None
         self.connected = None
+        self._loop = None
 
         self.client_trace_context = None
         self.server_info = None
@@ -1033,7 +1038,10 @@ class Connection:
         if self.connected:
             try:
                 await self.writer.close()
-            except ConnectionError as e:
+            except (ConnectionError, RuntimeError) as e:
+                # RuntimeError covers a writer whose event loop is already
+                # closed: closing its transport touches the dead loop. The
+                # connection object must still become reusable.
                 logger.debug("Socket closed", exc_info=e)
             finally:
                 self.reset_state()
@@ -1239,7 +1247,43 @@ class Connection:
         query_settings.update(settings)
         self.context.settings = query_settings
 
+    def _on_running_loop(self) -> bool:
+        """Whether this connection's streams live on the running event loop.
+
+        asyncio streams are bound to the loop that created them; a pooled
+        connection handed to another loop (pytest function-scoped loops,
+        Celery async_to_sync building one loop per task) cannot do I/O on
+        them and must be reconnected instead of trusted or pinged.
+        """
+        if self._loop is None or self._loop.is_closed():
+            return False
+        try:
+            return asyncio.get_running_loop() is self._loop
+        except RuntimeError:
+            return False
+
+    def _refresh_lock_for_running_loop(self) -> None:
+        """Recreate the query lock when it is bound to a different loop.
+
+        asyncio.Lock binds to a loop on first contention and then raises
+        "bound to a different event loop" for any other loop. A connection
+        crossing loops needs a fresh lock; the old loop is gone or foreign,
+        so no live waiter can be orphaned. Uses the private binding slot
+        defensively: if CPython internals change, this degrades to a no-op.
+        """
+        bound_loop = getattr(self._lock, "_loop", None)
+        if bound_loop is None:
+            return
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        if bound_loop is not running_loop:
+            logger.debug("Recreating connection lock for a new event loop")
+            self._lock = asyncio.Lock()
+
     async def force_connect(self, settings=None):
+        self._refresh_lock_for_running_loop()
         async with self._lock:
             if self.is_query_executing:
                 raise PartiallyConsumedQueryError()
@@ -1247,6 +1291,14 @@ class Connection:
             self.make_query_settings(settings)
 
             if not self.connected:
+                await self.connect()
+
+            elif not self._on_running_loop():
+                if self.disable_reconnect:
+                    raise NetworkError(
+                        "Connection is bound to a different event loop, reconnect is disabled."
+                    )
+                logger.info("Connection belongs to a closed event loop, reconnecting.")
                 await self.connect()
 
             elif not await self.ping():
