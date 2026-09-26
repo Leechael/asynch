@@ -213,19 +213,3 @@ jobs:
             gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${pr_number}/comments" \
               --input "$payload"
           fi
-
-  publish:
-    if: ${{ github.event_name == 'release' }}
-    needs: release-validation
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download validated dists
-        uses: actions/download-artifact@v4
-        with:
-          name: validated-dists-${{ github.run_id }}-${{ github.run_attempt }}
-          path: dist/
-      - name: PyPI publish
-        uses: pypa/gh-action-pypi-publish@master
-        with:
-          user: __token__
-          password: ${{ secrets.pypi_password }}
