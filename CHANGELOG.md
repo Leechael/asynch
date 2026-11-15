@@ -2,6 +2,19 @@
 
 ## 0.4
 
+### 0.4.0rc6
+
+- Send an integer subclass used as a query parameter as the number it carries,
+  not as the text the class spells itself with. A row id whose `__str__`
+  returns `wks_1` was escaped into the statement as `wks_1`, which is not a
+  valid SQL literal and failed the query; it is now escaped as `1`. Bools keep
+  their `True`/`False` spelling, an `Enum` still escapes through its value, and
+  server-side parameters keep their quoting.
+- CI: the Python 3.9 cells run on Ubuntu 24.04, because Ubuntu 26.04, which
+  `ubuntu-latest` is migrating to, has no Python 3.9 build for `setup-python`. Every
+  other matrix cell keeps `ubuntu-latest`, and the nightly Python version job
+  pins its 3.9 cell the same way.
+
 ### 0.4.0rc5
 
 - Reconnect transparently when a pooled connection moves to another event loop.
