@@ -78,11 +78,14 @@ jobs:
   python-versions:
     if: ${{ inputs.wp01_benchmark != true && inputs.wp07_benchmark != true && inputs.pool_only != true }}
     name: Python ${{ matrix.python }} / CH latest
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
         python: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+        include:
+          - python: "3.9"
+            os: ubuntu-24.04
     services:
       clickhouse:
         image: clickhouse/clickhouse-server:latest
