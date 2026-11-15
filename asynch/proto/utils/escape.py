@@ -140,6 +140,18 @@ def escape_param(
     elif isinstance(item, UUID):
         escaped = "'%s'" % str(item)
 
+    elif isinstance(item, bool):
+        # A bool is an int subclass, but the server reads its own spelling, so
+        # it keeps the text form it has always had rather than becoming 1 or 0.
+        escaped = str(item)
+
+    elif isinstance(item, int):
+        # An int subclass may spell itself as something other than the number
+        # it carries, such as a row id rendering as ``wks_...``. That text is
+        # not valid SQL, and the number is the only part the server can read,
+        # so the conversion goes through int() to bypass the subclass spelling.
+        escaped = str(int(item))
+
     else:
         escaped = str(item)
 
