@@ -35,13 +35,14 @@ jobs:
 
   compat:
     name: Python ${{ matrix.python }} / CH ${{ matrix.name }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: latest
             python: "3.9"
+            os: ubuntu-24.04
             clickhouse: clickhouse/clickhouse-server:latest
             min_server_revision: "54483"
             required_types: JSON,Variant,Dynamic,QBit,BFloat16,Time
