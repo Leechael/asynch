@@ -16,18 +16,19 @@ class DateTimeColumn(FormatColumn):
     py_types = (datetime, int) + compat.string_types
     format = "I"
 
-    def __init__(self, timezone=None, offset_naive=True, **kwargs):
+    def __init__(self, timezone=None, offset_naive=True, datetime_as_utc=False, **kwargs):
         self.timezone = timezone
         self.offset_naive = offset_naive
+        self.datetime_as_utc = datetime_as_utc
         super().__init__(**kwargs)
 
     def after_read_items(self, items, nulls_map=None):
-        tz = self.timezone
+        tz = utc if self.datetime_as_utc else self.timezone
         fromts = datetime.fromtimestamp
 
         # A bit ugly copy-paste. But it helps save time on items
         # processing by avoiding lambda calls or if in loop.
-        if self.offset_naive:
+        if self.offset_naive and not self.datetime_as_utc:
             if tz:
                 if nulls_map is None:
                     return tuple(fromts(item, tz).replace(tzinfo=None) for item in items)
@@ -100,12 +101,12 @@ class DateTime64Column(DateTimeColumn):
     def after_read_items(self, items, nulls_map=None):
         scale = float(10**self.scale)
 
-        tz = self.timezone
+        tz = utc if self.datetime_as_utc else self.timezone
         fromts = datetime.fromtimestamp
 
         # A bit ugly copy-paste. But it helps save time on items
         # processing by avoiding lambda calls or if in loop.
-        if self.offset_naive:
+        if self.offset_naive and not self.datetime_as_utc:
             if tz:
                 if nulls_map is None:
                     return tuple(fromts(item / scale, tz).replace(tzinfo=None) for item in items)
@@ -213,4 +214,9 @@ def create_datetime_column(spec, column_options):
     if tz_name:
         timezone = get_timezone(tz_name)
 
-    return cls(timezone=timezone, offset_naive=offset_naive, **column_options)
+    return cls(
+        timezone=timezone,
+        offset_naive=offset_naive,
+        datetime_as_utc=offset_naive and context.client_settings.get("datetime_as_utc", False),
+        **column_options,
+    )

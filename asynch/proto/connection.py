@@ -339,6 +339,7 @@ class Connection:
             ),
             "namedtuple_as_json": self.settings.pop("namedtuple_as_json", True),
             "server_side_params": self.settings.pop("server_side_params", False),
+            "datetime_as_utc": self.settings.pop("datetime_as_utc", False),
         }
         self.last_query: Optional[QueryInfo] = None
         self.available_client_settings = (
@@ -352,6 +353,7 @@ class Connection:
             "input_format_null_as_default",
             "namedtuple_as_json",
             "server_side_params",
+            "datetime_as_utc",
         )
         self.context.settings = self.settings
         self.context.client_settings = self.client_settings

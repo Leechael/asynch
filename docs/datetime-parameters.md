@@ -104,6 +104,20 @@ keeps the plain string.
 Turn the behaviour off with `typed_datetime_literals=False` on the connection, or
 by setting `ASYNCH_TYPED_DATETIME_LITERALS=off`. It is on by default.
 
+## Read bare datetime columns as UTC
+
+Set the client setting `datetime_as_utc=True` (default: `False`):
+
+```python
+conn = Connection(dsn=dsn, settings={"datetime_as_utc": True})
+```
+
+The DSN equivalent is `clickhouse://host?datetime_as_utc=true`. This client-only
+option is not sent as a server setting. It decodes bare `DateTime` and
+`DateTime64(precision)` columns as aware UTC datetimes. Columns with an explicit
+timezone keep that timezone. This is read-only: native writes, including timezone
+interpretation of naive datetimes, are unchanged.
+
 ## date_time_input_format is yours, not the driver's
 
 Whether the server accepts `'2026-07-25 17:33:45.123456'` for a second precision

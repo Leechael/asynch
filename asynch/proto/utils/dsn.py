@@ -84,7 +84,7 @@ def parse_dsn(dsn: str) -> dict[str, Any]:
                 kwargs[name] = asbool(value)
         elif name == "secure":
             kwargs[name] = asbool(value)
-        elif name in ("use_numpy", "use_client_time_zone"):
+        elif name in ("use_numpy", "use_client_time_zone", "datetime_as_utc"):
             settings[name] = asbool(value)
         elif name == "round_robin":
             kwargs[name] = asbool(value)
