@@ -2,6 +2,16 @@
 
 ## 0.4
 
+### 0.4.0
+
+- Stable release including the fixes from previous 0.4 release candidates.
+- Add the opt-in `datetime_as_utc` client setting, also available in the DSN,
+  to read bare `DateTime` and `DateTime64` values as timezone-aware UTC datetimes.
+  It defaults to off; explicit column timezones and native write semantics are
+  unchanged.
+- Parse `use_client_time_zone=false` and `use_client_time_zone=0` in the DSN as
+  boolean false.
+
 ### 0.4.0rc6
 
 - Send an integer subclass used as a query parameter as the number it carries,
