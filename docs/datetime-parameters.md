@@ -118,6 +118,41 @@ option is not sent as a server setting. It decodes bare `DateTime` and
 timezone keep that timezone. This is read-only: native writes, including timezone
 interpretation of naive datetimes, are unchanged.
 
+## Session timezone policy
+
+Defaults are unchanged: bare `DateTime` and `DateTime64` columns decode to naive
+Python datetimes in the driver-selected timezone: the handshake server timezone,
+or a `TimezoneUpdate` received for the current statement. With
+`use_client_time_zone=True`, the client local timezone is used instead. An
+explicit column timezone always wins.
+
+Arbitrary `session_timezone` settings are **not reliably followed**. The native
+[`TimezoneUpdate` packet][timezone-update] initializes `input()`; it is not a
+generic per-query timezone notification. asynch clears the received timezone
+before each query and neither parses SQL `SETTINGS` nor probes/caches the session
+timezone. A prior `SELECT timezone()` cannot reveal a later query's local
+`SETTINGS session_timezone=...`.
+
+Measured on ClickHouse **26.3.62.3**, with a UTC handshake timezone:
+
+```sql
+SELECT toDateTime(1704067200) AS ts, toString(ts) AS text
+SETTINGS session_timezone = 'Asia/Shanghai'
+```
+
+`ts` has bare type `DateTime`; `text` is `2024-01-01 08:00:00`. Default Python
+`ts` is naive `2024-01-01 00:00:00`; `datetime_as_utc=True` yields aware
+`2024-01-01 00:00:00+00:00`. This example was not tested on older versions.
+
+For absolute instants, the existing `datetime_as_utc=True` read-only option
+avoids this ambiguity. For a chosen display timezone, use
+`SELECT toTimeZone(col, 'Asia/Shanghai') AS col`: the result has an explicit
+timezone, without a schema migration. Native writes remain unchanged; prefer
+aware datetimes. This does not make all text-payload writes timezone-safe.
+See [issue #20](https://github.com/Leechael/asynch/issues/20).
+
+[timezone-update]: https://github.com/ClickHouse/ClickHouse/blob/master/docs/reference/interfaces/specs/NativeProtocol.mdx#timezoneupdate-packet-type-17
+
 ## date_time_input_format is yours, not the driver's
 
 Whether the server accepts `'2026-07-25 17:33:45.123456'` for a second precision
