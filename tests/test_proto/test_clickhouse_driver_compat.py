@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import ssl
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import UUID
@@ -301,6 +302,18 @@ def test_upstream_server_side_params_is_client_setting():
 
     assert conn.client_settings["server_side_params"] is True
     assert "server_side_params" not in conn.settings
+
+
+def test_datetime_as_utc_is_client_setting():
+    assert ProtoConnection().client_settings["datetime_as_utc"] is False
+    config = parse_dsn("clickhouse://host?datetime_as_utc=true")
+    assert config["settings"]["datetime_as_utc"] is True
+    conn = ProtoConnection(**config)
+    assert conn.client_settings["datetime_as_utc"] is True
+    assert "datetime_as_utc" not in conn.settings
+    conn.make_query_settings(parse_dsn("clickhouse://host?datetime_as_utc=false")["settings"])
+    assert conn.context.client_settings["datetime_as_utc"] is False
+    assert "datetime_as_utc" not in conn.context.settings
 
 
 @pytest.mark.filterwarnings("ignore:ssl.PROTOCOL_TLSv1_2 is deprecated:DeprecationWarning")
@@ -1022,6 +1035,27 @@ def test_upstream_datetime_column_uses_session_timezone(monkeypatch):
     )
 
     assert column.timezone.zone == "Europe/Berlin"
+
+
+@pytest.mark.parametrize(
+    ("spec", "scale", "zone"),
+    [
+        ("DateTime", 1, "UTC"),
+        ("DateTime64(3)", 1000, "UTC"),
+        ("DateTime('Asia/Shanghai')", 1, "Asia/Shanghai"),
+    ],
+)
+def test_datetime_as_utc_reads_without_changing_writes(monkeypatch, spec, scale, zone):
+    monkeypatch.setattr("asynch.proto.columns.datetimecolumn.get_localzone", lambda: "Local/Zone")
+    conn = ProtoConnection(settings={"datetime_as_utc": True})
+    conn.context.server_info = SimpleNamespace(timezone="UTC", get_timezone=lambda: "Asia/Shanghai")
+    column = create_datetime_column(spec, {"context": conn.context, "reader": None, "writer": None})
+    decoded = column.after_read_items([0])[0]
+    assert decoded == datetime(1970, 1, 1, tzinfo=timezone.utc)
+    assert str(decoded.tzinfo) == zone
+    items = [datetime(2024, 1, 1)]
+    column.before_write_items(items)
+    assert items == [1704038400 * scale]
 
 
 def test_upstream_server_side_params_use_double_escaping():
