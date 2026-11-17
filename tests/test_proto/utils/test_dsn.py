@@ -78,6 +78,12 @@ def test_dsn_basic_credentials(
         assert result == answer
 
 
+def test_dsn_use_client_time_zone_false() -> None:
+    config = parse_dsn("clickhouse://host?use_client_time_zone=false")
+
+    assert config["settings"]["use_client_time_zone"] is False
+
+
 @pytest.mark.parametrize(
     ("dsn", "query", "answer"),
     [
